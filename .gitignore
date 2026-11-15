@@ -18,3 +18,4 @@ htmlcov/
 # Local preview Home Assistant: keep only the hand-written config
 dev/config/*
 !dev/config/configuration.yaml
+.uvtmp/

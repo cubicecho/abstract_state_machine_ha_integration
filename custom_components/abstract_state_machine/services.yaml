@@ -1,0 +1,16 @@
+set_state:
+  target:
+    entity:
+      integration: abstract_state_machine
+      domain: select
+  fields:
+    state:
+      required: true
+      example: running
+      selector:
+        text:
+    reason:
+      required: false
+      example: NFC tag by the sink
+      selector:
+        text:

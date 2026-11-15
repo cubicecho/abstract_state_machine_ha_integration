@@ -1,0 +1,15 @@
+{
+  "domain": "abstract_state_machine",
+  "name": "Abstract State Machine",
+  "codeowners": [
+    "@vantreeseba"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/cubicecho/abstract_state_machine_ha_integration",
+  "integration_type": "helper",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/cubicecho/abstract_state_machine_ha_integration/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

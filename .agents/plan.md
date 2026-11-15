@@ -15,16 +15,17 @@ See [research.md](research.md) for what exists already and why this isn't a dupl
 | Domain / name | `abstract_state_machine` ("Abstract State Machine"). Repo `cubicecho/abstract_state_machine_ha_integration` | 2026-11-15 |
 | States | **User-defined.** No preset state sets. The user adds, names, orders and removes states | 2026-11-15 |
 | Rules | **Attached to a state**: "enter this state when …". Rules use HA triggers and conditions (`TriggerSelector` / `ConditionSelector`). No rule language of our own | 2026-11-15 |
-| One machine = | One config entry. **One machine per person, device or thing**, each made by the user (Alice's day type and Bob's day type are two machines) | 2026-11-15 |
+| Grouping | **Entry = a person or thing, subentry = a machine.** An entry is a new virtual device ("Alice time"), an existing device (the dishwasher's plug, Alice's phone) or no device; its machines are `machine` subentries, entities on that device. HA 2026.10+ gives a device a single config entry, so one-entry-per-machine couldn't share a device. HA persons have no device, so "attach to Alice" means a virtual "Alice" device or her phone's device | 2026-11-15 |
+| One machine = | One subentry. **One machine per person, device or thing**, each made by the user (Alice's day type and Bob's day type are two machines) | 2026-11-15 |
 | Presets | **None in the MVP.** Examples live in docs. Maybe later: "duplicate machine" so Bob's day type starts as a copy of Alice's | 2026-11-15 |
-| State entity | `select` (options = states). Choosing an option = manual set | 2026-11-15 (proposed) |
-| Events on change | Built in: `state_changed` on the select, one `event` entity per machine, and a bus event. No external hooks | 2026-11-15 (proposed) |
-| Dependencies | None. No `transitions` library: the engine is small and pure | 2026-11-15 (proposed) |
-| Minimum HA | 2026.11 (latest stable at the start). Lower it if nothing we use needs it | 2026-11-15 (proposed) |
+| State entity | `select` (options = states). Choosing an option = manual set | 2026-11-15 |
+| Events on change | Built in: `state_changed` on the select, one `event` entity per machine, and a bus event. No external hooks | 2026-11-15 |
+| Dependencies | None. No `transitions` library: the engine is small and pure | 2026-11-15 |
+| Minimum HA | 2026.10 (single-config-entry devices, `probatio` schemas; what pytest-homeassistant-custom-component ships) | 2026-11-15 |
 
 ## Concepts
 
-**Machine**: a name, an ordered list of **states**, a **fallback state** (also the initial state), and a **placement** (below). Optionally linked to a **person**, which is just a label for now (it shows in attributes and helps group machines on a person's device).
+**Machine**: a name, an ordered list of **states**, and a **fallback state** (also the initial state). It lives in an entry, which decides its device (below). Optionally linked to a **person**, which is just a label for now (it shows in attributes).
 
 **State**: a name, an optional icon, and its **rules**, the ways to enter it. A state with no rules is entered only by hand or by a service call.
 
@@ -76,26 +77,31 @@ Renaming a state: the select's options change, so automations using the old name
 
 Later, maybe: device triggers ("Dishwasher entered clean") so the automation editor reads nicely. Optional binary sensors per state ("Alice is sleeping").
 
-## Placement: helper entity or device
+## Placement: entry = device
 
-Picked when the machine is created, and changeable later:
+The entry, picked when it's created and changeable from its **Configure** button:
 
-1. **Entity only**: no device. Just a helper, like an `input_select`.
-2. **New virtual device**: the flow creates a device named by the user, or reuses one this integration made earlier. Several machines can share it. Alice's "Day type" and "Hour type" both sit on an "Alice" device, since HA persons don't have devices.
-3. **Existing device**: attach the entities to a device you already have (the dishwasher's smart plug), the way template helpers do.
+1. **New virtual device**: the entry makes a device with its own name ("Alice time", "House"). All its machines are entities on it.
+2. **Existing device**: the machines' entities attach to a device you already have (the dishwasher's smart plug, Alice's phone), the way template helpers do (`entity.device_entry`). We don't join that device's config entry.
+3. **No device**: plain helper entities, like an `input_select`.
 
-## Config and options flows
+Moving an entry keeps entity ids and states. Moving off a virtual device deletes it (after the entities have moved, so they aren't removed with it).
 
-**Create** (Settings → Helpers → Abstract State Machine):
+## Config and subentry flows
 
-1. Name, states (a list: type a name, press enter), fallback state, optional person.
-2. Placement: entity only / new or shared virtual device / existing device.
+**Entry** (Settings → Devices & services → Add integration → Abstract State Machine): a menu (new virtual device / existing device / no device), then a name or a device. Creating it opens the first machine's flow straight away (as core's Bayesian helper does).
 
-**Options** (the helper's settings) is a menu:
+**Machine** (+ Add state machine on the integration page): name, states (a list: type a name, press Enter), optional person; then the fallback state.
 
-- **States**: add, rename, reorder, remove, set icon, set fallback.
-- **Rules**: pick a state → list its rules → add / edit / remove. Edit = name, kind (trigger or condition), `from` states, triggers (`TriggerSelector`), conditions (`ConditionSelector`).
-- **Placement**.
+**Edit a machine** (its ⋮ → Reconfigure) is a menu:
+
+- **Add, remove or reorder states** (one list; the order is the priority order).
+- **Rename a state**: keeps its place, icon, rules and the machine's current state (carried across the reload in `runtime._RENAMES`).
+- **Name, fallback and person**.
+- **State icons**: the select shows the current state's icon.
+- Phase 2: **Rules**: pick a state → list its rules → add / edit / remove. Edit = name, kind (trigger or condition), `from` states, triggers (`TriggerSelector`), conditions (`ConditionSelector`).
+
+**Entry options**: placement.
 
 Forms are HA's standard selectors. If the step-by-step menus feel clumsy in the preview, the fallback is a sidebar panel later (like map-fusion's), maybe with a diagram of the machine.
 
@@ -148,11 +154,11 @@ Planned files under `custom_components/abstract_state_machine/`:
 | `model.py` | Dataclasses, parsing from `entry.options`, validation: unique state names, `from` states exist, fallback exists. Pure |
 | `engine.py` | Pure decisions: manual set, trigger rule `from` check, first matching condition rule, override expiry, reason. Tested without HA |
 | `runtime.py` | One per machine. Sets up triggers and condition listeners, calls the engine, writes state, fires events. (Phase 2) |
-| `config_flow.py` | Helper create flow and options menu (above) |
+| `config_flow.py` | Entry flow, entry options (placement), machine subentry flow and reconfigure menu (above) |
 | `select.py`, `event.py` | Entities. `RestoreEntity` on the select |
 | `services.py`, `services.yaml` | Above |
 
-Config is stored in `entry.options` (helper convention, so the options flow can edit everything). `entry.data` stays empty.
+The entry's placement is in `entry.options` (so its options flow can edit it); `entry.data` is empty. Each machine is in its subentry's `data` (states, fallback, person; rules from phase 2) and title (its name).
 
 **Startup**: hold the restored state until `EVENT_HOMEASSISTANT_STARTED`, then evaluate condition rules. Otherwise unavailable inputs at boot flip day type to the fallback and fire bogus transitions.
 
@@ -165,7 +171,11 @@ Config is stored in `entry.options` (helper convention, so the options flow can 
 ## Phases
 
 0. **Scaffold** ✅ (2026-11-15) — these docs, `dev/` preview instance, git repo.
-1. **Machine core, manual only.** Manifest, `model.py`, `engine.py`, create flow (name, states, fallback, person, placement: none / virtual device / existing device), options flow for states and placement, `select` + `event` entities, bus event, `set_state`, restore, tests, CI. Preview: make a "Dishwasher" machine, flip it by hand, see events in the logbook.
+1. **Machine core, manual only** ✅ (2026-11-15, 0.1.0). Manifest, `model.py`, `engine.py`, `runtime.py`, entry flow (virtual / existing / no device) → first machine, machine subentry flow + reconfigure menu (states, rename, name/fallback/person, icons), entry options (placement), `select` + `event` entities, bus event, `set_state` (with `reason`), restore, CI. 44 tests. Differences from the plan:
+   - **Entry = device, subentry = machine** (was: entry = machine). HA 2026.10 devices belong to one config entry, so per-machine entries couldn't share a device.
+   - No `clear_override` / `hold` yet: nothing to override until rules exist.
+   - Restoring never fires events. A restored state that was removed from the machine falls back.
+   - A machine named like its device isn't doubled: "Dishwasher" on device "Dishwasher" is `select.dishwasher`.
 2. **Rules.** Per-state rules in the options flow (selectors), `runtime.py`, reasons, overrides, `clear_override`, `signal`, `reevaluate`, startup handling. Preview: the dishwasher driven by the fake power slider.
 3. **Composition and calendars.** Loop guard for machines that read each other. Calendar matching ("any current event whose title contains PTO"): a template first, our own condition type if templates are too painful. README recipes for the examples.
 4. **Extras.** Duplicate machine, `explain` service, device triggers, per-state binary sensors, maybe a panel or card that draws the machine (states as nodes, rules as edges, current state lit).

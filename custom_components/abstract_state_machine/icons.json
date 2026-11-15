@@ -1,0 +1,7 @@
+{
+  "services": {
+    "set_state": {
+      "service": "mdi:state-machine"
+    }
+  }
+}

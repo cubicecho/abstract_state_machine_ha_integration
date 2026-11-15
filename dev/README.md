@@ -4,13 +4,18 @@ A throwaway Home Assistant in Docker with this repo's integration mounted. Use i
 
 ```bash
 cd dev
-docker compose up          # first start pulls the image (~1.5 GB) and takes a minute
+docker --context default compose up -d   # first start pulls the image (~1.5 GB) and takes a minute
 # open http://localhost:8123, do onboarding once (any user/password; it stays in dev/config)
 ```
 
-- **After changing Python code:** `docker compose restart` (HA loads custom components only at startup). For flow and translation changes, a restart is enough. No rebuild.
-- **Reset everything:** `docker compose down`, then delete everything in `dev/config/` except `configuration.yaml`.
-- **Logs:** `docker compose logs -f`. The integration logs at debug level.
+`--context default` uses the Docker daemon on this machine. Your current context (`docker context ls`) may point at another host (`docker.lan`), where the repo's files aren't, so the bind mounts would come up empty. The commands below assume the same flag.
+
+Then: Settings → Devices & services → Add integration → **Abstract State Machine**.
+
+- **After changing Python code:** `docker --context default compose restart` (HA loads custom components only at startup). For flow and translation changes, a restart is enough. No rebuild.
+- **Stop:** `docker --context default compose down`.
+- **Reset everything:** stop it, then delete everything in `dev/config/` except `configuration.yaml`. HA runs as root in the container, so its files are root-owned: `docker --context default run --rm -v "$PWD/config":/c alpine sh -c 'find /c -mindepth 1 ! -name configuration.yaml -delete'`.
+- **Logs:** `docker --context default compose logs -f`. The integration logs at debug level.
 
 ## Fake inputs
 

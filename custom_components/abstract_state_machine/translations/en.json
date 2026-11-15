@@ -1,0 +1,166 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a person or thing",
+        "description": "Its state machines (day type, hour type, dishwasher mode, …) are added to it as entities. Where should they go?",
+        "menu_options": {
+          "virtual_device": "A new virtual device",
+          "existing_device": "A device I already have",
+          "none": "No device (plain helper entities)"
+        }
+      },
+      "virtual_device": {
+        "title": "New virtual device",
+        "description": "A device just for its state machines, e.g. \"Alice time\" or \"House\".",
+        "data": {
+          "name": "Device name"
+        }
+      },
+      "existing_device": {
+        "title": "Existing device",
+        "description": "The state machines become entities on this device, e.g. the dishwasher's smart plug or Alice's phone.",
+        "data": {
+          "device_id": "Device"
+        }
+      },
+      "none": {
+        "title": "No device",
+        "description": "A name for this group of state machines. Their entities won't be on any device.",
+        "data": {
+          "name": "Name"
+        }
+      }
+    },
+    "error": {
+      "name_required": "Enter a name.",
+      "device_not_found": "That device no longer exists."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Where the state machines go",
+        "description": "Moving keeps each machine's state and entity IDs.",
+        "data": {
+          "placement": "Placement",
+          "device_id": "Device (for \"A device I already have\")"
+        }
+      }
+    },
+    "error": {
+      "device_required": "Pick a device.",
+      "device_not_found": "That device no longer exists."
+    }
+  },
+  "config_subentries": {
+    "machine": {
+      "initiate_flow": {
+        "user": "Add state machine",
+        "reconfigure": "Edit state machine"
+      },
+      "entry_type": "State machine",
+      "step": {
+        "user": {
+          "title": "New state machine on {entry}",
+          "description": "Name it and list its states, in priority order (rules arrive in a later version). Type a state and press Enter to add the next.",
+          "data": {
+            "name": "Name",
+            "states": "States",
+            "person": "Person (optional)"
+          },
+          "data_description": {
+            "person": "Who this machine is about, e.g. Alice for \"Alice day type\". Just a label for now."
+          }
+        },
+        "fallback": {
+          "title": "Fallback state",
+          "description": "Where the machine starts, and where it goes when no rule matches.",
+          "data": {
+            "fallback": "Fallback state"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit {machine}",
+          "menu_options": {
+            "edit_states": "Add, remove or reorder states",
+            "rename_state": "Rename a state",
+            "settings": "Name, fallback and person",
+            "icons": "State icons"
+          }
+        },
+        "edit_states": {
+          "title": "States",
+          "description": "The order is the priority order. Removing the current state sends the machine to its fallback. Automations that use a removed state stop matching.",
+          "data": {
+            "states": "States"
+          }
+        },
+        "rename_state": {
+          "title": "Rename a state",
+          "description": "The machine keeps its place. Automations that use the old name need updating.",
+          "data": {
+            "state": "State",
+            "new_name": "New name"
+          }
+        },
+        "settings": {
+          "title": "Name, fallback and person",
+          "data": {
+            "name": "Name",
+            "fallback": "Fallback state",
+            "person": "Person (optional)"
+          }
+        },
+        "icons": {
+          "title": "State icons",
+          "description": "The machine's entity shows the icon of its current state."
+        }
+      },
+      "error": {
+        "name_required": "Enter a name.",
+        "too_few_states": "Add at least two states.",
+        "duplicate_state": "Each state needs a different name (case doesn't count).",
+        "reserved_state": "\"unknown\" and \"unavailable\" are Home Assistant's own states. Pick another name.",
+        "state_too_long": "State names can be at most 255 characters.",
+        "unknown_state": "That state no longer exists."
+      },
+      "abort": {
+        "reconfigure_successful": "Saved."
+      }
+    }
+  },
+  "selector": {
+    "placement": {
+      "options": {
+        "virtual_device": "A new virtual device",
+        "existing_device": "A device I already have",
+        "none": "No device"
+      }
+    }
+  },
+  "exceptions": {
+    "unknown_state": {
+      "message": "\"{state}\" isn't a state of {machine}. Its states are: {states}."
+    },
+    "not_ready": {
+      "message": "{machine} is still starting."
+    }
+  },
+  "services": {
+    "set_state": {
+      "name": "Set state",
+      "description": "Moves a state machine to a state, like picking it in the dropdown, and records why.",
+      "fields": {
+        "state": {
+          "name": "State",
+          "description": "One of the machine's states."
+        },
+        "reason": {
+          "name": "Reason",
+          "description": "Shown in the machine's reason attribute and its transition event. Defaults to \"manual\"."
+        }
+      }
+    }
+  }
+}
