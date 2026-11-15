@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.env
+*.swp
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+.claude/worktrees/
+
+# Local preview Home Assistant: keep only the hand-written config
+dev/config/*
+!dev/config/configuration.yaml
