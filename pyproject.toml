@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "abstract-state-machine-ha-integration"
-version = "0.1.0"
+version = "0.2.0"
 description = "Home Assistant helper for user-defined state machines"
 requires-python = ">=3.13"
 dependencies = []

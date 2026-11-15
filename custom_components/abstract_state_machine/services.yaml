@@ -14,3 +14,14 @@ set_state:
       example: NFC tag by the sink
       selector:
         text:
+    hold:
+      required: false
+      example: "02:00:00"
+      selector:
+        duration:
+
+clear_override:
+  target:
+    entity:
+      integration: abstract_state_machine
+      domain: select

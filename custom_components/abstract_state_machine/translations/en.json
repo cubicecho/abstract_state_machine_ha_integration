@@ -63,7 +63,7 @@
       "step": {
         "user": {
           "title": "New state machine on {entry}",
-          "description": "Name it and list its states, in priority order (rules arrive in a later version). Type a state and press Enter to add the next.",
+          "description": "Name it and list its states. Type a state and press Enter to add the next. The order matters for condition rules: the first state from the top whose rules match wins. Add rules afterwards from the machine's ⋮ → Reconfigure → Rules.",
           "data": {
             "name": "Name",
             "states": "States",
@@ -83,9 +83,10 @@
         "reconfigure": {
           "title": "Edit {machine}",
           "menu_options": {
+            "rules": "Rules: what moves the machine into each state",
             "edit_states": "Add, remove or reorder states",
             "rename_state": "Rename a state",
-            "settings": "Name, fallback and person",
+            "settings": "Name, fallback, person and flip limit",
             "icons": "State icons"
           }
         },
@@ -105,16 +106,62 @@
           }
         },
         "settings": {
-          "title": "Name, fallback and person",
+          "title": "Name, fallback, person and flip limit",
           "data": {
             "name": "Name",
             "fallback": "Fallback state",
-            "person": "Person (optional)"
+            "person": "Person (optional)",
+            "max_flips": "Flip limit (rule changes per minute)"
+          },
+          "data_description": {
+            "max_flips": "After this many rule-driven changes within a minute, the machine ignores its rules until the minute is up. Stops machines that read each other from flipping forever."
           }
         },
         "icons": {
           "title": "State icons",
           "description": "The machine's entity shows the icon of its current state."
+        },
+        "rules": {
+          "title": "Rules",
+          "description": "Rules belong to the state they lead to. Pick a state to see and edit its rules.\n\n- **Trigger rules** move the machine when something happens, e.g. power drops below 3 W for 15 minutes.\n- **Condition rules** keep the machine in the state while something is true. The first state from the top with a matching rule wins; when none match, the machine goes to its fallback ({fallback}).\n\nPicking a state by hand (or a trigger rule) holds until the condition rules' answer changes.",
+          "data": {
+            "state": "State"
+          }
+        },
+        "rules_list": {
+          "title": "Rules into {state}",
+          "description": "{rules}",
+          "data": {
+            "action": "What next?"
+          }
+        },
+        "trigger_rule": {
+          "title": "Trigger rule into {state}",
+          "description": "When any of the triggers fires, and the machine is in one of the **From** states (any, if empty), and the conditions pass, it goes to {state}.",
+          "data": {
+            "name": "Name",
+            "from": "From (optional)",
+            "triggers": "Triggers",
+            "conditions": "Only if (optional)"
+          },
+          "data_description": {
+            "name": "Shown as the machine's reason when this rule moves it."
+          }
+        },
+        "condition_rule": {
+          "title": "Condition rule for {state}",
+          "description": "While all of these conditions are true, the machine is in {state}, unless a state above it also has a matching rule.",
+          "data": {
+            "name": "Name",
+            "conditions": "Conditions"
+          },
+          "data_description": {
+            "name": "Shown as the machine's reason while this rule holds it."
+          }
+        },
+        "loop_warning": {
+          "title": "These machines read each other",
+          "description": "With this rule, the machines form a loop: {loop}. They can keep changing each other. Each machine stops following its rules for a minute after {max_flips} rule changes in a minute (its flip limit, under Name, fallback, person and flip limit).\n\nSave the rule anyway?"
         }
       },
       "error": {
@@ -123,7 +170,11 @@
         "duplicate_state": "Each state needs a different name (case doesn't count).",
         "reserved_state": "\"unknown\" and \"unavailable\" are Home Assistant's own states. Pick another name.",
         "state_too_long": "State names can be at most 255 characters.",
-        "unknown_state": "That state no longer exists."
+        "unknown_state": "That state no longer exists.",
+        "triggers_required": "Add at least one trigger.",
+        "conditions_required": "Add at least one condition.",
+        "invalid_triggers": "These triggers aren't valid: {error}",
+        "invalid_conditions": "These conditions aren't valid: {error}"
       },
       "abort": {
         "reconfigure_successful": "Saved."
@@ -150,7 +201,7 @@
   "services": {
     "set_state": {
       "name": "Set state",
-      "description": "Moves a state machine to a state, like picking it in the dropdown, and records why.",
+      "description": "Moves a state machine to a state, like picking it in the dropdown, and records why. On a machine with condition rules, it holds until their answer changes.",
       "fields": {
         "state": {
           "name": "State",
@@ -159,8 +210,22 @@
         "reason": {
           "name": "Reason",
           "description": "Shown in the machine's reason attribute and its transition event. Defaults to \"manual\"."
+        },
+        "hold": {
+          "name": "Hold for",
+          "description": "On a machine with condition rules: go back to following them after this long, even if their answer hasn't changed."
         }
       }
+    },
+    "clear_override": {
+      "name": "Clear override",
+      "description": "Stops holding a state set by hand or by a trigger rule; the machine follows its condition rules again."
+    }
+  },
+  "issues": {
+    "flip_limit": {
+      "title": "{machine} is changing state too often",
+      "description": "{machine} changed state {max_flips} times within a minute because of its rules, so it ignores them until the minute is up. Its rules may form a loop with another machine's. Check its rules, or raise its flip limit (the machine's ⋮ → Reconfigure → Name, fallback, person and flip limit). This goes away after a restart or when the machine is edited."
     }
   }
 }

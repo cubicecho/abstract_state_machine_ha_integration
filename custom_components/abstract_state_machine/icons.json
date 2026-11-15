@@ -2,6 +2,9 @@
   "services": {
     "set_state": {
       "service": "mdi:state-machine"
+    },
+    "clear_override": {
+      "service": "mdi:restore"
     }
   }
 }

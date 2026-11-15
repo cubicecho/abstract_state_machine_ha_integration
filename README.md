@@ -2,7 +2,7 @@
 
 A Home Assistant helper for your own **state machines**: "Alice's day type" (workday / weekend / holiday), "the dishwasher" (cleared / loaded / running / clean), "house mode", whatever you need. You name the states. Each machine is an entity whose state you can use in automations, dashboards and other machines.
 
-**Status: 0.1.0, manual only.** You can build machines, put them on devices and change their state by hand or from automations. Rules that move a machine by themselves (HA triggers and conditions, e.g. "power below 3 W for 15 min → clean") come next. See [`.agents/plan.md`](.agents/plan.md).
+**Status: 0.2.0.** Machines move on their own through **rules**: HA triggers and conditions, the same pickers as the automation editor. You can still set them by hand or from automations. See [`.agents/plan.md`](.agents/plan.md).
 
 ## Install
 
@@ -16,7 +16,22 @@ Settings → Devices & services → **Add integration** → Abstract State Machi
 - **A device I already have**, e.g. the dishwasher's smart plug, or Alice's phone. HA people don't have devices, but their phones do.
 - **No device**: plain helper entities.
 
-Then add the first machine: a name, its states (type one, press Enter, type the next), an optional person, and the **fallback state** (where it starts). Add more machines to the same device with **+ Add state machine** on the integration page. Edit a machine (states, renames, fallback, icons) from its ⋮ menu, and move a device's machines from **Configure**.
+Then add the first machine: a name, its states (type one, press Enter, type the next), an optional person, and the **fallback state** (where it starts, and where it goes when no condition rule matches). Add more machines to the same device with **+ Add state machine** on the integration page. Edit a machine from its ⋮ → **Reconfigure** (rules, states, renames, fallback, flip limit, icons), and move a device's machines from **Configure**.
+
+## Rules
+
+Rules belong to the state they lead to: ⋮ → Reconfigure → **Rules** → pick a state → add a rule.
+
+- **Trigger rule**: when something happens, go to this state. Optional **From** states (only from those) and **Only if** conditions. Example, into `clean`: from `running`, trigger "dishwasher power below 3 W for 15 minutes".
+- **Condition rule**: while something is true, be in this state. The **first state from the top** with a matching condition rule wins; when none match, the machine goes to its fallback. So the order of the states is the priority. Example, a day type with states `vacation`, `holiday`, `workday`, `weekend` (fallback): `vacation` while the PTO calendar is on, `holiday` while the holiday calendar is on, `workday` while the workday sensor is on.
+
+Condition rules are re-checked whenever an entity they use changes, and once a minute for time, sun and template conditions.
+
+**Setting a state by hand** (or a trigger rule moving the machine) **holds** against its condition rules until their answer changes. Pick `holiday` on a workday, and the machine stays there until the rules say something other than `workday` (at midnight, say), then follows them again. `set_state` can also hold for a fixed time, and `clear_override` ends a hold now. An input that's unavailable counts as "doesn't match", as in automations.
+
+**Machines can read each other**: hour type can use "day type is workday", house mode can use everyone's hour type. If a new rule makes machines read each other in a loop, the flow warns you before saving. Each machine also has a **flip limit** (default 10): after that many rule-driven changes in a minute, it ignores its rules until the minute is up and raises a repair issue.
+
+The machine's `reason` attribute names the rule that put it in its state; `rules_state` shows what its condition rules say right now.
 
 ## What you get
 
@@ -24,7 +39,7 @@ Per machine, on the chosen device:
 
 | Entity | What it does |
 |---|---|
-| `select.<device>_<machine>` (e.g. `select.alice_time_day_type`) | The current state. Pick an option to set it by hand. Attributes: `previous`, `reason`, `changed_at`, `manual`, `person` |
+| `select.<device>_<machine>` (e.g. `select.alice_time_day_type`) | The current state. Pick an option to set it by hand. Attributes: `previous`, `reason` (rule name, `manual`, `fallback`, …), `changed_at`, `manual`, `person`; with condition rules also `rules_state`, `override`, `override_until`; `flip_limited` while it's over its flip limit |
 | `event.<device>_<machine>_transition` | Fires on every change. The event type is the state entered; attributes `from`, `to`, `reason` |
 
 Every change also fires an `abstract_state_machine_transition` event on the bus with `entity_id`, `machine`, `from`, `to`, `reason` and `manual`.
@@ -56,7 +71,7 @@ data:
   reason: NFC tag by the sink   # optional; shows in the reason attribute
 ```
 
-`select.select_option` works too, and records the reason as `manual`.
+`select.select_option` works too, and records the reason as `manual`. On a machine with condition rules, add `hold: "02:00:00"` to go back to the rules after two hours at the latest, or call `abstract_state_machine.clear_override` to go back now.
 
 ## Development
 

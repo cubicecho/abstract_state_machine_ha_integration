@@ -1,26 +1,52 @@
-"""A machine's definition: states, fallback, person. Pure, no HA imports.
+"""A machine's definition: states, their rules, fallback, person. Pure, no HA imports.
 
 A machine is stored as a config subentry. Its ``data`` looks like::
 
     {
-        "states": [{"name": "running", "icon": "mdi:dishwasher"}, ...],
+        "states": [
+            {
+                "name": "running",
+                "icon": "mdi:dishwasher",
+                "rules": [
+                    {
+                        "id": "4f1c…",
+                        "name": "Drawing power",
+                        "kind": "trigger",
+                        "from": ["cleared", "loaded"],
+                        "triggers": [{"trigger": "numeric_state", …}],
+                        "conditions": [],
+                    },
+                ],
+            },
+            ...
+        ],
         "fallback": "cleared",
         "person": "person.alice",   # optional
+        "max_flips": 10,            # rule-driven changes allowed per minute
     }
 
-Each state dict will also carry its rules (phase 2). Edits here keep any
-keys they don't know about, so rules survive renames and reorders.
+Triggers and conditions are stored exactly as the automation editor sends
+them (plain JSON). The runtime validates them when it sets them up.
+
+Edits here keep keys they don't know about.
 """
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 # HA's own states. A select can't use them as options without confusion.
 RESERVED_STATES = frozenset({"unknown", "unavailable"})
 MAX_STATE_LENGTH = 255
 MIN_STATES = 2
+
+KIND_TRIGGER = "trigger"
+KIND_CONDITION = "condition"
+RULE_KINDS = (KIND_TRIGGER, KIND_CONDITION)
+
+DEFAULT_MAX_FLIPS = 10
+MAX_MAX_FLIPS = 100
 
 
 class InvalidStates(ValueError):
@@ -32,11 +58,29 @@ class InvalidStates(ValueError):
 
 
 @dataclass(frozen=True)
+class RuleDef:
+    """One way into a state.
+
+    A trigger rule fires on ``triggers`` (if the machine is in one of
+    ``from_states``, or any state when empty, and ``conditions`` pass). A
+    condition rule matches while all its ``conditions`` are true.
+    """
+
+    id: str
+    name: str
+    kind: str
+    from_states: tuple[str, ...] = ()
+    triggers: tuple[dict[str, Any], ...] = ()
+    conditions: tuple[dict[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
 class StateDef:
     """One state of a machine."""
 
     name: str
     icon: str | None = None
+    rules: tuple[RuleDef, ...] = field(default=())
 
 
 @dataclass(frozen=True)
@@ -47,6 +91,7 @@ class MachineDef:
     states: tuple[StateDef, ...]
     fallback: str
     person: str | None = None
+    max_flips: int = DEFAULT_MAX_FLIPS
 
     @property
     def names(self) -> list[str]:
@@ -54,6 +99,15 @@ class MachineDef:
 
     def state(self, name: str) -> StateDef | None:
         return next((state for state in self.states if state.name == name), None)
+
+    def rules(self) -> Iterable[tuple[StateDef, RuleDef]]:
+        for state in self.states:
+            for rule in state.rules:
+                yield state, rule
+
+    @property
+    def has_condition_rules(self) -> bool:
+        return any(rule.kind == KIND_CONDITION for _, rule in self.rules())
 
 
 def clean_state_names(raw: Iterable[str]) -> list[str]:
@@ -77,21 +131,63 @@ def new_machine_data(names: Iterable[str], fallback: str | None, person: str | N
     return _with_fallback({"states": states, "fallback": fallback, "person": person or None})
 
 
+# Parsing -------------------------------------------------------------------
+
+
 def parse(title: str, data: Mapping[str, Any]) -> MachineDef:
-    """Read a machine from subentry data. Tolerant: bad bits fall back, never raise."""
+    """Read a machine from subentry data. Tolerant: bad bits are dropped, never raise."""
+    raw_states = [raw for raw in data.get("states") or [] if isinstance(raw, Mapping)]
+    names: list[str] = []
+    for raw in raw_states:
+        name = str(raw.get("name", "")).strip()
+        if name and name.casefold() not in {n.casefold() for n in names}:
+            names.append(name)
     states: list[StateDef] = []
-    seen: set[str] = set()
-    for raw in data.get("states") or []:
-        name = str(raw.get("name", "")).strip() if isinstance(raw, Mapping) else ""
-        if not name or name.casefold() in seen:
+    for raw in raw_states:
+        name = str(raw.get("name", "")).strip()
+        if name not in names or any(state.name == name for state in states):
             continue
-        seen.add(name.casefold())
-        states.append(StateDef(name=name, icon=raw.get("icon") or None))
-    names = [state.name for state in states]
+        rules = tuple(rule for r in raw.get("rules") or [] if (rule := _parse_rule(r, names)) is not None)
+        states.append(StateDef(name=name, icon=raw.get("icon") or None, rules=rules))
     fallback = data.get("fallback")
     if fallback not in names:
         fallback = names[0] if names else ""
-    return MachineDef(name=title, states=tuple(states), fallback=fallback, person=data.get("person") or None)
+    return MachineDef(
+        name=title,
+        states=tuple(states),
+        fallback=fallback,
+        person=data.get("person") or None,
+        max_flips=_max_flips(data.get("max_flips")),
+    )
+
+
+def _parse_rule(raw: Any, names: list[str]) -> RuleDef | None:
+    if not isinstance(raw, Mapping) or raw.get("kind") not in RULE_KINDS or not raw.get("id"):
+        return None
+    triggers = tuple(t for t in raw.get("triggers") or [] if isinstance(t, Mapping))
+    conditions = tuple(c for c in raw.get("conditions") or [] if isinstance(c, Mapping))
+    kind = raw["kind"]
+    if (kind == KIND_TRIGGER and not triggers) or (kind == KIND_CONDITION and not conditions):
+        return None
+    return RuleDef(
+        id=str(raw["id"]),
+        name=str(raw.get("name") or "").strip() or kind,
+        kind=kind,
+        from_states=tuple(s for s in raw.get("from") or [] if s in names) if kind == KIND_TRIGGER else (),
+        triggers=tuple(dict(t) for t in triggers),
+        conditions=tuple(dict(c) for c in conditions),
+    )
+
+
+def _max_flips(value: Any) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_FLIPS
+    return min(max(number, 1), MAX_MAX_FLIPS)
+
+
+# Edits ------------------------------------------------------------------------
 
 
 def with_states(data: Mapping[str, Any], names: Iterable[str]) -> dict[str, Any]:
@@ -99,14 +195,16 @@ def with_states(data: Mapping[str, Any], names: Iterable[str]) -> dict[str, Any]
 
     ``names`` must already be clean. Matching is exact, so changing a name's
     case here makes a new state; use ``rename_state`` to keep its settings.
+    Removed states drop out of every rule's ``from``.
     """
+    names = list(names)
     old = {state["name"]: state for state in data.get("states") or [] if isinstance(state, Mapping)}
-    states = [dict(old.get(name, {"name": name})) for name in names]
+    states = [_map_from(dict(old.get(name, {"name": name})), lambda s: s if s in names else None) for name in names]
     return _with_fallback({**data, "states": states})
 
 
 def rename_state(data: Mapping[str, Any], old: str, new: str) -> dict[str, Any]:
-    """Rename one state, keeping its place, icon, rules and fallback role.
+    """Rename one state, keeping its place, icon, rules, fallback role and ``from`` uses.
 
     Raise ``InvalidStates`` if the new name clashes or isn't allowed.
     """
@@ -114,11 +212,13 @@ def rename_state(data: Mapping[str, Any], old: str, new: str) -> dict[str, Any]:
     if old not in names:
         raise InvalidStates("unknown_state")
     renamed = clean_state_names([new if name == old else name for name in names])
+    new = new.strip()
     states = [
-        {**state, "name": renamed[i]} for i, state in enumerate(data.get("states") or [])
+        _map_from({**state, "name": renamed[i]}, lambda s: new if s == old else s)
+        for i, state in enumerate(data.get("states") or [])
     ]
     fallback = data.get("fallback")
-    return _with_fallback({**data, "states": states, "fallback": new.strip() if fallback == old else fallback})
+    return _with_fallback({**data, "states": states, "fallback": new if fallback == old else fallback})
 
 
 def with_icons(data: Mapping[str, Any], icons: Mapping[str, str | None]) -> dict[str, Any]:
@@ -135,9 +235,111 @@ def with_icons(data: Mapping[str, Any], icons: Mapping[str, str | None]) -> dict
     return {**data, "states": states}
 
 
+def with_settings(data: Mapping[str, Any], fallback: str, person: str | None, max_flips: Any) -> dict[str, Any]:
+    return _with_fallback({**data, "fallback": fallback, "person": person or None, "max_flips": _max_flips(max_flips)})
+
+
+def upsert_rule(data: Mapping[str, Any], state_name: str, rule: Mapping[str, Any]) -> dict[str, Any]:
+    """Add ``rule`` to ``state_name``, or replace the rule with the same id (wherever it is)."""
+    names = [state["name"] for state in data.get("states") or []]
+    if state_name not in names:
+        raise InvalidStates("unknown_state")
+    rule = {**rule, "from": [s for s in rule.get("from") or [] if s in names]}
+    states = []
+    for state in data.get("states") or []:
+        rules = [r for r in state.get("rules") or [] if r.get("id") != rule["id"]]
+        if state["name"] == state_name:
+            old = next((i for i, r in enumerate(state.get("rules") or []) if r.get("id") == rule["id"]), None)
+            if old is None:
+                rules.append(dict(rule))
+            else:
+                rules.insert(old, dict(rule))
+        states.append({**state, "rules": rules})
+    return {**data, "states": states}
+
+
+def remove_rule(data: Mapping[str, Any], rule_id: str) -> dict[str, Any]:
+    states = [
+        {**state, "rules": [r for r in state.get("rules") or [] if r.get("id") != rule_id]}
+        for state in data.get("states") or []
+    ]
+    return {**data, "states": states}
+
+
+def find_rule(data: Mapping[str, Any], rule_id: str) -> tuple[str, dict[str, Any]] | None:
+    """The state a rule leads to, and the rule's raw dict."""
+    for state in data.get("states") or []:
+        for rule in state.get("rules") or []:
+            if rule.get("id") == rule_id:
+                return state["name"], dict(rule)
+    return None
+
+
+def _map_from(state: dict[str, Any], change: Any) -> dict[str, Any]:
+    """Apply ``change`` to every name in the state's rules' ``from`` (``None`` drops it)."""
+    if not state.get("rules"):
+        return state
+    rules = []
+    for rule in state["rules"]:
+        if rule.get("from"):
+            rule = {**rule, "from": [new for s in rule["from"] if (new := change(s)) is not None]}
+        rules.append(rule)
+    return {**state, "rules": rules}
+
+
 def _with_fallback(data: dict[str, Any]) -> dict[str, Any]:
     """Make sure the fallback is one of the states (the first, if not)."""
     names = [state["name"] for state in data["states"]]
     if data.get("fallback") not in names:
         data["fallback"] = names[0] if names else None
     return data
+
+
+# Loops between machines -------------------------------------------------------------
+
+
+def referenced_entities(config: Any) -> set[str]:
+    """Every ``entity_id`` named anywhere in trigger or condition config (best effort: no templates)."""
+    found: set[str] = set()
+    stack = [config]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, Mapping):
+            for key, value in item.items():
+                if key == "entity_id":
+                    if isinstance(value, str):
+                        found.update(v.strip() for v in value.split(",") if v.strip())
+                    elif isinstance(value, list):
+                        found.update(v for v in value if isinstance(v, str))
+                else:
+                    stack.append(value)
+        elif isinstance(item, list):
+            stack.extend(item)
+    return found
+
+
+def find_loop(depends_on: Mapping[str, set[str]], start: str) -> list[str] | None:
+    """A path ``start → … → start`` through other machines, or ``None``.
+
+    ``depends_on[a]`` = the machines whose entities ``a``'s rules read.
+    Self-references (time in own state) don't count.
+    """
+    path: list[str] = [start]
+    seen: set[str] = set()
+
+    def visit(node: str) -> list[str] | None:
+        for nxt in sorted(depends_on.get(node, set())):
+            if nxt == node:
+                continue
+            if nxt == start and len(path) > 1:
+                return [*path, start]
+            if nxt in seen or nxt == start:
+                continue
+            seen.add(nxt)
+            path.append(nxt)
+            if found := visit(nxt):
+                return found
+            path.pop()
+        return None
+
+    return visit(start)

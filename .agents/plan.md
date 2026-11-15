@@ -21,6 +21,10 @@ See [research.md](research.md) for what exists already and why this isn't a dupl
 | State entity | `select` (options = states). Choosing an option = manual set | 2026-11-15 |
 | Events on change | Built in: `state_changed` on the select, one `event` entity per machine, and a bus event. No external hooks | 2026-11-15 |
 | Dependencies | None. No `transitions` library: the engine is small and pure | 2026-11-15 |
+| Manual override | Holds until the condition rules' answer changes; optional `hold` duration; `clear_override` | 2026-11-15 |
+| Trigger rule on a machine with condition rules | Holds like a manual change | 2026-11-15 |
+| Loops between machines | **Warn** in the flow when a new rule closes a loop; a per-machine **flip limit** (`max_flips` rule-driven changes per minute, default 10) stops it at runtime | 2026-11-15 |
+| Unavailable inputs | HA's default: a condition on an unavailable entity is false | 2026-11-15 |
 | Minimum HA | 2026.10 (single-config-entry devices, `probatio` schemas; what pytest-homeassistant-custom-component ships) | 2026-11-15 |
 
 ## Concepts
@@ -49,16 +53,16 @@ states:
 - **Trigger rule** ("something happened"): when one of its triggers fires, the machine is in one of `from`, and its conditions pass, go to its state.
 - **Condition rule** ("this is true now"): conditions only, no triggers. The engine re-checks condition rules whenever an entity they reference changes, and once a minute for time and sun conditions. **The first state, top to bottom, with a matching condition rule wins.** When none match, the machine goes to the fallback state. So the user sets priority by ordering the states.
 
-A machine can mix both kinds. **Open:** when a machine has condition rules and a trigger rule fires, does the trigger's state stick until the computed result next changes (like a manual override), or get recomputed straight away? Proposed: it sticks, the same as a manual set.
+A machine can mix both kinds. When a machine has condition rules and a trigger rule fires, the trigger's state holds until the condition rules' answer next changes, the same as a manual set.
 
 **Time in a state** needs no special feature. A trigger rule can use a state trigger on the machine's own entity with `for:`, e.g. `clean` for 12 h → `cleared`.
 
 **Manual override**: choosing an option on the select, or calling `set_state`:
 
 - On a machine with only trigger rules, it's simply the new state.
-- On a machine with condition rules, it's held until the computed result **changes** (proposed default), until a duration passes (`hold: "02:00:00"`), or until `clear_override`. Attributes show `override: true` and `override_until`.
+- On a machine with condition rules, it's held until the computed result **changes**, until a duration passes (`hold: "02:00:00"`), or until `clear_override`. Attributes show `override: true`, `override_until` and `rules_state` (what the rules say).
 
-**Machines read each other.** They're entities, so hour type's rules can say "Alice day type is workday", and house mode can say "every hour type is sleeping". The engine must stop loops (A reads B reads A): refuse them at save time if we can find them, otherwise cap re-evaluation depth at runtime (**open**).
+**Machines read each other.** They're entities, so hour type's rules can say "Alice day type is workday", and house mode can say "every hour type is sleeping". Loops (A reads B reads A) get a warning when the rule is saved, and the flip limit stops them at runtime.
 
 ## Entities
 
@@ -176,13 +180,14 @@ The entry's placement is in `entry.options` (so its options flow can edit it); `
    - No `clear_override` / `hold` yet: nothing to override until rules exist.
    - Restoring never fires events. A restored state that was removed from the machine falls back.
    - A machine named like its device isn't doubled: "Dishwasher" on device "Dishwasher" is `select.dishwasher`.
-2. **Rules.** Per-state rules in the options flow (selectors), `runtime.py`, reasons, overrides, `clear_override`, `signal`, `reevaluate`, startup handling. Preview: the dishwasher driven by the fake power slider.
-3. **Composition and calendars.** Loop guard for machines that read each other. Calendar matching ("any current event whose title contains PTO"): a template first, our own condition type if templates are too painful. README recipes for the examples.
+2. **Rules** ✅ (2026-11-15, 0.2.0). Per-state trigger and condition rules in the reconfigure flow (HA's pickers), `runtime.py` (HA trigger and condition helpers → engine), reasons, holds (`hold`, `clear_override`, kept across restarts as extra restore data), startup after HA has started, flip limit + repair issue, loop warning in the flow. 89 tests. Differences from the plan:
+   - No `signal` or `reevaluate` services. Automations can already call `set_state`, and condition rules re-check on their own; add them if a real use shows up.
+   - Rule changes save straight away and the flow stays on the rule list ("Done" closes it), so several rules can be added in one go.
+   - Labels in the rule list (Add / Edit / Delete …) are English only: they're built per rule, so they can't come from translations.
+   - Condition rules re-check via HA 2026.10's condition checkers (`async_track_changes` / `needs_polling`), not by extracting entity ids.
+3. **Composition and calendars.** Calendar matching ("any current event whose title contains PTO"): a template first, our own condition type if templates are too painful. README recipes for the examples.
 4. **Extras.** Duplicate machine, `explain` service, device triggers, per-state binary sensors, maybe a panel or card that draws the machine (states as nodes, rules as edges, current state lit).
 
 ## Open questions
 
-1. **Manual override default** on machines with condition rules: hold until the computed result changes (proposed), or until the end of the day?
-2. **Trigger rules on a machine with condition rules:** does the trigger's state stick until the computed result changes (proposed), or get recomputed straight away?
-3. **Loops between machines:** refuse at save time, or only cap at runtime?
-4. **Unavailable inputs:** treat as "doesn't match" (HA default), or freeze the machine while an input is unavailable?
+None right now.

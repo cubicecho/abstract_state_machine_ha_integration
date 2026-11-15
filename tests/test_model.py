@@ -43,22 +43,26 @@ def test_parse_is_tolerant() -> None:
     assert machine.person is None
 
 
+def _trig(rule_id: str, from_states: list[str]) -> dict:
+    return {"id": rule_id, "name": rule_id, "kind": "trigger", "from": from_states, "triggers": [{"trigger": "x"}]}
+
+
 def test_with_states_keeps_settings_of_kept_states() -> None:
     data = {
-        "states": [{"name": "a", "icon": "mdi:a", "rules": [1]}, {"name": "b"}],
+        "states": [{"name": "a", "icon": "mdi:a", "rules": [_trig("r", ["b", "c"])]}, {"name": "b"}],
         "fallback": "b",
         "person": "person.alice",
     }
     new = model.with_states(data, ["c", "a"])
-    assert new["states"] == [{"name": "c"}, {"name": "a", "icon": "mdi:a", "rules": [1]}]
+    assert new["states"] == [{"name": "c"}, {"name": "a", "icon": "mdi:a", "rules": [_trig("r", ["c"])]}]
     assert new["fallback"] == "c"  # b is gone
     assert new["person"] == "person.alice"
 
 
 def test_rename_state_keeps_place_icon_rules_and_fallback() -> None:
-    data = {"states": [{"name": "a"}, {"name": "b", "icon": "mdi:b", "rules": [1]}], "fallback": "b"}
+    data = {"states": [{"name": "a", "rules": [_trig("r", ["b"])]}, {"name": "b", "icon": "mdi:b"}], "fallback": "b"}
     new = model.rename_state(data, "b", " busy ")
-    assert new["states"] == [{"name": "a"}, {"name": "busy", "icon": "mdi:b", "rules": [1]}]
+    assert new["states"] == [{"name": "a", "rules": [_trig("r", ["busy"])]}, {"name": "busy", "icon": "mdi:b"}]
     assert new["fallback"] == "busy"
 
 
@@ -79,3 +83,68 @@ def test_with_icons_sets_and_clears() -> None:
     data = {"states": [{"name": "a", "icon": "mdi:a"}, {"name": "b"}], "fallback": "a"}
     new = model.with_icons(data, {"a": None, "b": "mdi:b"})
     assert new["states"] == [{"name": "a"}, {"name": "b", "icon": "mdi:b"}]
+
+
+def test_parse_rules() -> None:
+    machine = model.parse(
+        "Dishwasher",
+        {
+            "states": [
+                {"name": "running", "rules": [
+                    _trig("go", ["cleared", "gone"]),
+                    {"id": "bad", "kind": "trigger", "triggers": []},  # no triggers: dropped
+                    {"kind": "condition", "conditions": [{"condition": "x"}]},  # no id: dropped
+                    {"id": "c", "name": " ", "kind": "condition", "conditions": [{"condition": "x"}], "from": ["cleared"]},
+                ]},
+                {"name": "cleared"},
+            ],
+            "max_flips": "500",
+        },
+    )
+    (state, _) = machine.states
+    assert [r.id for r in state.rules] == ["go", "c"]
+    assert state.rules[0].from_states == ("cleared",)  # unknown state dropped
+    assert state.rules[1].name == "condition"  # blank name → kind
+    assert state.rules[1].from_states == ()  # condition rules have no from
+    assert machine.has_condition_rules
+    assert machine.max_flips == model.MAX_MAX_FLIPS
+
+
+@pytest.mark.parametrize(("value", "expected"), [(None, 10), ("x", 10), (0, 1), (5, 5), (1000, 100)])
+def test_max_flips_clamped(value: object, expected: int) -> None:
+    assert model.parse("m", {"states": [{"name": "a"}, {"name": "b"}], "max_flips": value}).max_flips == expected
+
+
+def test_upsert_find_and_remove_rule() -> None:
+    data = model.new_machine_data(["a", "b", "c"], "a", None)
+    data = model.upsert_rule(data, "b", _trig("r1", ["a", "zz"]))
+    data = model.upsert_rule(data, "b", _trig("r2", []))
+    assert [r["id"] for r in data["states"][1]["rules"]] == ["r1", "r2"]
+    assert data["states"][1]["rules"][0]["from"] == ["a"]
+    # Replacing keeps the rule's place.
+    data = model.upsert_rule(data, "b", {**_trig("r1", ["c"]), "name": "renamed"})
+    assert [r["name"] for r in data["states"][1]["rules"]] == ["renamed", "r2"]
+    assert model.find_rule(data, "r1") == ("b", {**_trig("r1", ["c"]), "name": "renamed"})
+    data = model.remove_rule(data, "r1")
+    assert model.find_rule(data, "r1") is None
+    with pytest.raises(model.InvalidStates):
+        model.upsert_rule(data, "zz", _trig("r3", []))
+
+
+def test_with_settings() -> None:
+    data = model.with_settings(model.new_machine_data(["a", "b"], "a", "person.x"), "b", "", 7)
+    assert (data["fallback"], data["person"], data["max_flips"]) == ("b", None, 7)
+
+
+def test_referenced_entities() -> None:
+    config = [
+        {"rules": [{"triggers": [{"trigger": "state", "entity_id": ["sensor.a", "sensor.b"]}]}]},
+        {"conditions": [{"condition": "and", "conditions": [{"condition": "state", "entity_id": "select.x, select.y"}]}]},
+    ]
+    assert model.referenced_entities(config) == {"sensor.a", "sensor.b", "select.x", "select.y"}
+
+
+def test_find_loop() -> None:
+    assert model.find_loop({"a": {"b"}, "b": {"c"}, "c": {"a"}}, "a") == ["a", "b", "c", "a"]
+    assert model.find_loop({"a": {"a", "b"}, "b": set()}, "a") is None  # self-reference is fine
+    assert model.find_loop({"a": {"b"}, "b": {"c"}, "c": {"b"}}, "a") is None  # a loop, but not through a

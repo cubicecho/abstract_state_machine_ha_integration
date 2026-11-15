@@ -232,3 +232,171 @@ async def test_move_from_virtual_device_to_existing_and_back_to_none(hass: HomeA
     await hass.async_block_till_done()
     assert ent_reg.async_get("select.dishwasher_mode").device_id is None
     assert dev_reg.async_get(plug.id) is not None  # someone else's device: left alone
+
+
+# Rules ----------------------------------------------------------------------------
+
+POWER_TRIGGER = [{"trigger": "numeric_state", "entity_id": ["sensor.dishwasher_power"], "above": 10}]
+
+
+def _fields(result: dict[str, Any]) -> dict[str, Any]:
+    """The form as the frontend gets it."""
+    import probatio
+    from homeassistant.helpers import config_validation as cv
+
+    return {f["name"]: f for f in probatio.to_field_list(result["data_schema"], custom_serializer=cv.custom_serializer)}
+
+
+async def _rules_of(hass: HomeAssistant, entry: MockConfigEntry, state: str) -> dict[str, Any]:
+    result = await _reconfigure(hass, entry, "rules")
+    assert result["step_id"] == "rules"
+    result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"state": state})
+    assert result["step_id"] == "rules_list"
+    return result
+
+
+def _rules(entry: MockConfigEntry, state: str) -> list[dict[str, Any]]:
+    (sub,) = entry.subentries.values()
+    return next(s.get("rules", []) for s in sub.data["states"] if s["name"] == state)
+
+
+async def test_add_edit_delete_a_trigger_rule(hass: HomeAssistant) -> None:
+    hass.states.async_set("sensor.dishwasher_power", "0")
+    entry = await add_entry(hass, "Dishwasher", [machine("Mode", DISHWASHER_STATES)])
+    result = await _rules_of(hass, entry, "running")
+    assert "No rules yet" in result["description_placeholders"]["rules"]
+    flow_id = result["flow_id"]
+
+    result = await hass.config_entries.subentries.async_configure(flow_id, {"action": "add_trigger"})
+    assert result["step_id"] == "trigger_rule"
+    fields = _fields(result)
+    assert fields["triggers"]["selector"] == {"trigger": {}}  # the automation editor's picker
+    assert fields["conditions"]["selector"] == {"condition": {}}
+    assert fields["from"]["selector"]["select"]["options"] == ["cleared", "loaded", "clean"]
+
+    result = await hass.config_entries.subentries.async_configure(
+        flow_id, {"name": "Drawing power", "from": ["cleared", "loaded"], "triggers": POWER_TRIGGER}
+    )
+    assert result["step_id"] == "rules_list"
+    assert "**Drawing power**: trigger rule from cleared, loaded (1 trigger)" in result["description_placeholders"]["rules"]
+    (rule,) = _rules(entry, "running")
+    assert rule["triggers"] == POWER_TRIGGER  # stored exactly as sent
+    assert rule["from"] == ["cleared", "loaded"]
+    await hass.async_block_till_done()  # the entry reloads with the rule
+
+    hass.states.async_set("sensor.dishwasher_power", "1500")
+    await hass.async_block_till_done()
+    assert hass.states.get("select.dishwasher_mode").state == "running"
+
+    # Edit: the form starts from the rule.
+    result = await hass.config_entries.subentries.async_configure(flow_id, {"action": f"edit:{rule['id']}"})
+    assert result["step_id"] == "trigger_rule"
+    result = await hass.config_entries.subentries.async_configure(
+        flow_id, {"name": "Power on", "from": [], "triggers": POWER_TRIGGER}
+    )
+    (edited,) = _rules(entry, "running")
+    assert (edited["id"], edited["name"], edited["from"]) == (rule["id"], "Power on", [])
+
+    result = await hass.config_entries.subentries.async_configure(flow_id, {"action": f"delete:{rule['id']}"})
+    assert result["step_id"] == "rules_list"
+    assert _rules(entry, "running") == []
+
+    result = await hass.config_entries.subentries.async_configure(flow_id, {"action": "done"})
+    assert result["reason"] == "reconfigure_successful"
+
+
+async def test_trigger_rule_errors(hass: HomeAssistant) -> None:
+    entry = await add_entry(hass, "Dishwasher", [machine("Mode", DISHWASHER_STATES)])
+    result = await _rules_of(hass, entry, "running")
+    flow_id = result["flow_id"]
+    result = await hass.config_entries.subentries.async_configure(flow_id, {"action": "add_trigger"})
+    result = await hass.config_entries.subentries.async_configure(flow_id, {"name": "x", "triggers": []})
+    assert result["errors"] == {"triggers": "triggers_required"}
+    result = await hass.config_entries.subentries.async_configure(
+        flow_id, {"name": "x", "triggers": [{"trigger": "no_such_trigger"}]}
+    )
+    assert result["errors"] == {"triggers": "invalid_triggers"}
+    assert result["description_placeholders"]["error"]
+    result = await hass.config_entries.subentries.async_configure(
+        flow_id, {"name": "x", "triggers": POWER_TRIGGER, "conditions": [{"condition": "nope"}]}
+    )
+    assert result["errors"] == {"conditions": "invalid_conditions"}
+    assert _rules(entry, "running") == []
+
+
+async def test_add_a_condition_rule(hass: HomeAssistant) -> None:
+    hass.states.async_set("binary_sensor.workday", "on")
+    entry = await add_entry(hass, "Alice time", [machine("Day type", ["holiday", "workday", "weekend"], "weekend")])
+    result = await _rules_of(hass, entry, "workday")
+    flow_id = result["flow_id"]
+    result = await hass.config_entries.subentries.async_configure(flow_id, {"action": "add_condition"})
+    assert result["step_id"] == "condition_rule"
+    result = await hass.config_entries.subentries.async_configure(flow_id, {"name": "x", "conditions": []})
+    assert result["errors"] == {"conditions": "conditions_required"}
+    result = await hass.config_entries.subentries.async_configure(
+        flow_id,
+        {"name": "Workday sensor", "conditions": [{"condition": "state", "entity_id": "binary_sensor.workday", "state": "on"}]},
+    )
+    assert result["step_id"] == "rules_list"
+    await hass.async_block_till_done()
+    state = hass.states.get("select.alice_time_day_type")
+    assert (state.state, state.attributes["reason"]) == ("workday", "Workday sensor")
+
+    # The rules step lists rule counts per state.
+    result = await hass.config_entries.subentries.async_configure(flow_id, {"action": "other_state"})
+    labels = {o["value"]: o["label"] for o in _fields(result)["state"]["selector"]["select"]["options"]}
+    assert labels == {"holiday": "holiday (0 rules)", "workday": "workday (1 rule)", "weekend": "weekend (0 rules)"}
+
+
+async def test_loop_warning(hass: HomeAssistant) -> None:
+    a = machine("A", ["x", "y"], "x", sub_id="sub_a")
+    a["data"]["states"][1]["rules"] = [{
+        "id": "r", "name": "B is y", "kind": "condition",
+        "conditions": [{"condition": "state", "entity_id": "select.loop_b", "state": "y"}],
+    }]
+    entry_a = await add_entry(hass, "Loop", [a])
+    entry_b = await add_entry(hass, "Loop B", [machine("B", ["x", "y"], "x", sub_id="sub_b")])
+    assert hass.states.get("select.loop_b_b") is not None
+    # Point A at B's real entity id.
+    hass.config_entries.async_update_subentry(
+        entry_a, entry_a.subentries["sub_a"],
+        data={**a["data"], "states": [a["data"]["states"][0], {"name": "y", "rules": [{
+            "id": "r", "name": "B is y", "kind": "condition",
+            "conditions": [{"condition": "state", "entity_id": "select.loop_b_b", "state": "y"}],
+        }]}]},
+    )
+    await hass.async_block_till_done()
+
+    result = await _rules_of(hass, entry_b, "y")
+    flow_id = result["flow_id"]
+    await hass.config_entries.subentries.async_configure(flow_id, {"action": "add_condition"})
+    result = await hass.config_entries.subentries.async_configure(
+        flow_id, {"name": "A is x", "conditions": [{"condition": "state", "entity_id": "select.loop_a", "state": "x"}]}
+    )
+    assert result["step_id"] == "loop_warning"
+    assert result["description_placeholders"]["loop"] == "B → A → B"
+    assert _rules(entry_b, "y") == []  # not saved yet
+    result = await hass.config_entries.subentries.async_configure(flow_id, {})
+    assert result["step_id"] == "rules_list"
+    assert [r["name"] for r in _rules(entry_b, "y")] == ["A is x"]
+
+
+async def test_settings_flip_limit(hass: HomeAssistant) -> None:
+    entry = await add_entry(hass, "Dishwasher", [machine("Mode", DISHWASHER_STATES)])
+    result = await _reconfigure(hass, entry, "settings")
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {"name": "Mode", "fallback": "cleared", "max_flips": 4}
+    )
+    assert result["reason"] == "reconfigure_successful"
+    (sub,) = entry.subentries.values()
+    assert sub.data["max_flips"] == 4
+
+
+async def test_rename_updates_rules_from(hass: HomeAssistant) -> None:
+    sub = machine("Mode", DISHWASHER_STATES)
+    sub["data"]["states"][3]["rules"] = [{"id": "r", "name": "done", "kind": "trigger", "from": ["running"],
+                                          "triggers": POWER_TRIGGER}]
+    entry = await add_entry(hass, "Dishwasher", [sub])
+    result = await _reconfigure(hass, entry, "rename_state")
+    await hass.config_entries.subentries.async_configure(result["flow_id"], {"state": "running", "new_name": "washing"})
+    assert _rules(entry, "clean")[0]["from"] == ["washing"]

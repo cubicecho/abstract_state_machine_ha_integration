@@ -19,6 +19,7 @@ SUBENTRY_MACHINE = "machine"
 CONF_STATES = "states"
 CONF_FALLBACK = "fallback"
 CONF_PERSON = "person"
+CONF_MAX_FLIPS = "max_flips"
 
 # State attributes.
 ATTR_PREVIOUS = "previous"
@@ -29,5 +30,10 @@ ATTR_PERSON = "person"
 ATTR_FROM = "from"
 ATTR_TO = "to"
 ATTR_MACHINE = "machine"
+ATTR_RULES_STATE = "rules_state"  # what the condition rules say now
+ATTR_OVERRIDE = "override"  # a manual or trigger-rule state is holding against them
+ATTR_OVERRIDE_UNTIL = "override_until"
+ATTR_FLIP_LIMITED = "flip_limited"
 
 SERVICE_SET_STATE = "set_state"
+SERVICE_CLEAR_OVERRIDE = "clear_override"
