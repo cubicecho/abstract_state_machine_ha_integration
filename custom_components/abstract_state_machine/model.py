@@ -1,8 +1,18 @@
 """A machine's definition: states, their rules, fallback, person. Pure, no HA imports.
 
-A machine is stored as a config subentry. Its ``data`` looks like::
+A person or thing is a config entry. Its ``options`` hold where its
+entities go and its machines::
 
     {
+        "placement": "virtual_device",   # or "existing_device" (+ "device_id"), "none"
+        "machines": [<machine>, ...],
+    }
+
+A machine looks like::
+
+    {
+        "id": "9b2e…",
+        "name": "Mode",
         "states": [
             {
                 "name": "running",
@@ -32,6 +42,7 @@ Edits here keep keys they don't know about.
 """
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -85,13 +96,14 @@ class StateDef:
 
 @dataclass(frozen=True)
 class MachineDef:
-    """What a machine is, parsed from its subentry."""
+    """What a machine is, parsed from its dict in the entry's options."""
 
     name: str
     states: tuple[StateDef, ...]
     fallback: str
     person: str | None = None
     max_flips: int = DEFAULT_MAX_FLIPS
+    id: str = ""
 
     @property
     def names(self) -> list[str]:
@@ -125,17 +137,52 @@ def clean_state_names(raw: Iterable[str]) -> list[str]:
     return names
 
 
-def new_machine_data(names: Iterable[str], fallback: str | None, person: str | None) -> dict[str, Any]:
-    """Subentry data for a new machine. ``names`` must already be clean."""
-    states = [{"name": name} for name in names]
-    return _with_fallback({"states": states, "fallback": fallback, "person": person or None})
+def new_machine_data(
+    name: str, names: Iterable[str], fallback: str | None, person: str | None, machine_id: str | None = None
+) -> dict[str, Any]:
+    """A new machine. ``names`` must already be clean."""
+    states = [{"name": state} for state in names]
+    return _with_fallback({
+        "id": machine_id or uuid.uuid4().hex,
+        "name": name,
+        "states": states,
+        "fallback": fallback,
+        "person": person or None,
+    })
+
+
+# A person or thing's machines ---------------------------------------------------
+
+
+def machines_of(thing: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The machines in a person or thing's options, in order (ones without an id dropped)."""
+    return [dict(m) for m in thing.get("machines") or [] if isinstance(m, Mapping) and m.get("id")]
+
+
+def find_machine(thing: Mapping[str, Any], machine_id: str) -> dict[str, Any] | None:
+    return next((m for m in machines_of(thing) if m["id"] == machine_id), None)
+
+
+def with_machine(thing: Mapping[str, Any], machine: Mapping[str, Any]) -> dict[str, Any]:
+    """Replace the machine with the same id, in place, or add it at the end."""
+    machines = machines_of(thing)
+    index = next((i for i, m in enumerate(machines) if m["id"] == machine["id"]), None)
+    if index is None:
+        machines.append(dict(machine))
+    else:
+        machines[index] = dict(machine)
+    return {**thing, "machines": machines}
+
+
+def without_machine(thing: Mapping[str, Any], machine_id: str) -> dict[str, Any]:
+    return {**thing, "machines": [m for m in machines_of(thing) if m["id"] != machine_id]}
 
 
 # Parsing -------------------------------------------------------------------
 
 
-def parse(title: str, data: Mapping[str, Any]) -> MachineDef:
-    """Read a machine from subentry data. Tolerant: bad bits are dropped, never raise."""
+def parse(data: Mapping[str, Any]) -> MachineDef:
+    """Read a machine from its dict. Tolerant: bad bits are dropped, never raise."""
     raw_states = [raw for raw in data.get("states") or [] if isinstance(raw, Mapping)]
     names: list[str] = []
     for raw in raw_states:
@@ -153,7 +200,8 @@ def parse(title: str, data: Mapping[str, Any]) -> MachineDef:
     if fallback not in names:
         fallback = names[0] if names else ""
     return MachineDef(
-        name=title,
+        id=str(data.get("id") or ""),
+        name=str(data.get("name") or "").strip() or "State machine",
         states=tuple(states),
         fallback=fallback,
         person=data.get("person") or None,
@@ -235,8 +283,12 @@ def with_icons(data: Mapping[str, Any], icons: Mapping[str, str | None]) -> dict
     return {**data, "states": states}
 
 
-def with_settings(data: Mapping[str, Any], fallback: str, person: str | None, max_flips: Any) -> dict[str, Any]:
-    return _with_fallback({**data, "fallback": fallback, "person": person or None, "max_flips": _max_flips(max_flips)})
+def with_settings(
+    data: Mapping[str, Any], name: str, fallback: str, person: str | None, max_flips: Any
+) -> dict[str, Any]:
+    return _with_fallback({
+        **data, "name": name, "fallback": fallback, "person": person or None, "max_flips": _max_flips(max_flips),
+    })
 
 
 def upsert_rule(data: Mapping[str, Any], state_name: str, rule: Mapping[str, Any]) -> dict[str, Any]:

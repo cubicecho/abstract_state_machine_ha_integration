@@ -11,7 +11,7 @@ T0 = datetime(2026, 11, 15, 8, 0, tzinfo=UTC)
 T1 = T0 + timedelta(hours=1)
 T2 = T0 + timedelta(hours=2)
 
-DISHWASHER = model.parse("Dishwasher", model.new_machine_data(["cleared", "loaded", "running", "clean"], "cleared", None))
+DISHWASHER = model.parse(model.new_machine_data("Dishwasher", ["cleared", "loaded", "running", "clean"], "cleared", None))
 
 
 def _cond(rule_id: str, name: str = "") -> dict:
@@ -23,8 +23,8 @@ def _trig(rule_id: str, from_states: list[str] | None = None) -> dict:
 
 
 DAY = model.parse(
-    "Day type",
     {
+        "name": "Day type",
         "states": [
             {"name": "vacation", "rules": [_cond("pto", "PTO")]},
             {"name": "holiday", "rules": [_cond("public", "Public holiday"), _cond("company", "Company holiday")]},

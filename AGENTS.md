@@ -1,8 +1,8 @@
 # Project: Abstract State Machine — Home Assistant Integration
 
-A Home Assistant helper for building **state machines** in the UI. The user names each machine, adds their own states, and picks for each state the rules, HA triggers and conditions, that move the machine into it. Each machine is a `select` entity plus a transition `event` entity. Example machines, built by the user, not built in: per-person **day type** and **hour type**, **house mode**, a **dishwasher** cycle.
+A Home Assistant integration (`integration_type: hub`, so it lives under Integrations, not Helpers) for building **state machines** in the UI. The user names each machine, adds their own states, and picks for each state the rules, HA triggers and conditions, that move the machine into it. Each machine is a `select` entity. Example machines, built by the user, not built in: per-person **day type** and **hour type**, **house mode**, a **dishwasher** cycle.
 
-**Status: phase 2 done (0.2.0).** Machines, devices, trigger and condition rules, holds, flip limit, loop warning. Next: phase 3 (composition and calendars, README recipes). See [`.agents/plan.md`](.agents/plan.md).
+**Status: phase 2 done, restructured (0.3.0).** One entry per person or thing, its machines in the entry's options (no subentries); trigger and condition rules, holds, flip limit, loop warning. No transition events (for now). Next: phase 3 (composition and calendars, README recipes). See [`.agents/plan.md`](.agents/plan.md).
 
 ## Commands
 
@@ -24,27 +24,26 @@ Preview the UI in a throwaway HA (Docker, local daemon): `cd dev && docker --con
 
 ```
 custom_components/abstract_state_machine/
-  __init__.py      # setup: one AsmData per entry (device + MachineRuntime per subentry); services registered in async_setup
-  const.py         # DOMAIN, placements, subentry type, attribute names
-  model.py         # MachineDef/StateDef/RuleDef, validation, edits (rules follow renames), loop finding (pure)
+  __init__.py      # setup: the entry's Thing (device + MachineRuntimes); drops removed machines and an unused virtual device
+  const.py         # DOMAIN, placements, option keys, attribute names
+  model.py         # MachineDef/StateDef/RuleDef, a thing's machines, validation, edits (rules follow renames), loops (pure)
   engine.py        # Status (with holds), compute/apply_computed, fire_trigger, set_manual (pure)
-  runtime.py       # MachineRuntime: HA triggers + condition checkers → engine, flip limit, timers, bus event
-  data.py          # AsmData, AsmConfigEntry
-  entity.py        # MachineEntity: device_entry, unique ids, naming
-  select.py        # the state (RestoreEntity, full status incl. holds as extra data); service handlers
-  event.py         # transitions
-  config_flow.py   # entry flow (placement menu) → first machine; options (placement); machine subentry flow: rules, states, settings
+  runtime.py       # MachineRuntime: HA triggers + condition checkers → engine, flip limit, timers
+  data.py          # Thing, AsmConfigEntry, unique_id()
+  select.py        # the state (RestoreEntity, full status incl. holds as extra data); device_entry; service handlers
+  config_flow.py   # config flow: placement + first machine; options flow (Configure): machines, rules, states, settings, name/device
   services.py      # set_state (reason, hold), clear_override (platform entity services)
 tests/
-  common.py        # machine(), add_entry(): entries with subentries, no flows
+  common.py        # machine(), add_thing(), machine_data(): entries with machines, no flows
 dev/               # docker compose preview HA + fake inputs
 ```
 
 ## Key Conventions
 
-- **Entry = a person or thing; subentry = a machine.** An entry is a new virtual device, an existing device, or no device (`options.placement`). Its machines are `machine` subentries. HA 2026.10+ gives a device a single config entry, so this is the only way several machines share a device.
-- **Devices go on entities through `device_entry`, never `device_info`.** `device_info` would make one device per subentry, and an existing device belongs to another integration. The virtual device is created in `async_setup_entry` with the entry (no subentry).
-- **Any entry change reloads it** (update listener): new machine, edited machine, placement, title. So reconfigure flows use `async_update_and_abort`, not `..._reload_and_abort`.
+- **Entry = a person or thing; its machines live in `entry.options`.** `options` = `placement` (virtual / existing / none), `device_id` (existing), `machines` (each with its own `id`); `entry.data` is empty. No subentries: HA 2026.10+ gives a device one config entry and at most one subentry, so machines as subentries left the shared device under "Devices that don't belong to a sub-entry" (0.2.0), and people/things as subentries of one entry added a level (briefly, in 0.3.0 development). Machines are added and edited through the options flow (Configure), which saves rule edits mid-flow with `async_update_entry` and finishes with `async_create_entry(data=options)`.
+- **Devices go on entities through `device_entry`.** The virtual device is created in `async_setup_entry` with identifier `(DOMAIN, entry_id)`; an existing device belongs to another integration's entry and is only linked.
+- **A machine's unique id is `f"{machine_id}_state"`.** Setup removes registry entries of removed machines, and the virtual device once the entry moved off it (after the platforms set up, so the entities have moved first).
+- **Any entry change reloads it** (update listener): machines added, edited or removed, placement, title. HA doesn't abort an open options flow on reload, so the rule editor can save and stay.
 - **Schemas use `probatio`** (HA 2026.10+), imported as `vol`.
 - **States are user-defined; rules belong to the state they lead to.** Condition rules: first state top to bottom with a match wins, else the fallback state. A manual change or a trigger rule's change holds against them until their answer changes (or `hold` runs out, or `clear_override`).
 - **Rules are stored exactly as the automation editor sends them** (plain JSON). `_RawTriggerSelector` / `_RawConditionSelector` show HA's pickers but skip their validation, which would produce unstorable objects; `runtime.async_validate_*` validate a copy at save time and at setup. A rule that fails at setup is logged and skipped, not fatal.
@@ -52,8 +51,8 @@ dev/               # docker compose preview HA + fake inputs
 - **Flip limit, not loop prevention:** the flow warns about loops between machines (`model.find_loop`, best effort: no templates), and at runtime each machine allows `max_flips` rule-driven changes per minute, then ignores its rules for the rest of the minute and raises a repair issue.
 - **Timers pass the time they fired for** to the engine (`_evaluate(now)`), so tests can move HA's clock.
 - **`engine.py` and `model.py` stay pure** (no HA imports). Model edits keep keys they don't know.
-- **Every change records a `reason`** (`manual`, a caller's reason, later a rule name; `restored` / `initial` on startup). Startup never fires transition events.
-- **Events are built in:** the select's state change, the event entity, and the `abstract_state_machine_transition` bus event.
+- **Every change records a `reason`** (`manual`, a caller's reason, a rule name; `restored` / `initial` on startup).
+- **No event entity or bus event (for now):** automations use a state trigger on the select. Removed in 0.3.0 to keep it simple.
 - **No presets.** Day type, house mode, etc. are recipes the user builds.
 
 ## Agent File Convention

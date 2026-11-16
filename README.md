@@ -1,8 +1,8 @@
 # Abstract State Machine
 
-A Home Assistant helper for your own **state machines**: "Alice's day type" (workday / weekend / holiday), "the dishwasher" (cleared / loaded / running / clean), "house mode", whatever you need. You name the states. Each machine is an entity whose state you can use in automations, dashboards and other machines.
+A Home Assistant integration for your own **state machines**: "Alice's day type" (workday / weekend / holiday), "the dishwasher" (cleared / loaded / running / clean), "house mode", whatever you need. You name the states. Each machine is an entity whose state you can use in automations, dashboards and other machines.
 
-**Status: 0.2.0.** Machines move on their own through **rules**: HA triggers and conditions, the same pickers as the automation editor. You can still set them by hand or from automations. See [`.agents/plan.md`](.agents/plan.md).
+**Status: 0.3.0.** Machines move on their own through **rules**: HA triggers and conditions, the same pickers as the automation editor. You can still set them by hand or from automations. See [`.agents/plan.md`](.agents/plan.md).
 
 ## Install
 
@@ -10,17 +10,24 @@ HACS → Integrations → ⋮ → Custom repositories → add this repository (c
 
 ## Set up
 
-Settings → Devices & services → **Add integration** → Abstract State Machine. First pick where the machines go:
+Settings → Devices & services → **Add integration** → Abstract State Machine. Each time you add it, you set up one **person or thing**. Pick where its machines go:
 
-- **A new virtual device**, e.g. "Alice time" for Alice's day type and hour type, or "House".
+- **A new virtual device**, e.g. "Alice" for Alice's day type and hour type, or "House".
 - **A device I already have**, e.g. the dishwasher's smart plug, or Alice's phone. HA people don't have devices, but their phones do.
-- **No device**: plain helper entities.
+- **No device**: just the entities, not on any device.
 
-Then add the first machine: a name, its states (type one, press Enter, type the next), an optional person, and the **fallback state** (where it starts, and where it goes when no condition rule matches). Add more machines to the same device with **+ Add state machine** on the integration page. Edit a machine from its ⋮ → **Reconfigure** (rules, states, renames, fallback, flip limit, icons), and move a device's machines from **Configure**.
+Then add its first machine: a name, its states (type one, press Enter, type the next), an optional person, and the **fallback state** (where it starts, and where it goes when no condition rule matches).
+
+On the integration page, each person or thing is its own entry ("Alice", "Dishwasher"), with its device and its machines' entities. **Add entry** adds another. An entry's **Configure** has:
+
+- **Edit a state machine**: rules, states, renames, fallback, person, flip limit, icons.
+- **Add a state machine** to the same person or thing.
+- **Remove a state machine** (when there's more than one; to remove the last, delete the entry).
+- **Rename, or change the device**: move its machines to another device, or off devices. They keep their state and entity IDs.
 
 ## Rules
 
-Rules belong to the state they lead to: ⋮ → Reconfigure → **Rules** → pick a state → add a rule.
+Rules belong to the state they lead to: **Configure** → Edit a state machine → **Rules** → pick a state → add a rule.
 
 - **Trigger rule**: when something happens, go to this state. Optional **From** states (only from those) and **Only if** conditions. Example, into `clean`: from `running`, trigger "dishwasher power below 3 W for 15 minutes".
 - **Condition rule**: while something is true, be in this state. The **first state from the top** with a matching condition rule wins; when none match, the machine goes to its fallback. So the order of the states is the priority. Example, a day type with states `vacation`, `holiday`, `workday`, `weekend` (fallback): `vacation` while the PTO calendar is on, `holiday` while the holiday calendar is on, `workday` while the workday sensor is on.
@@ -35,18 +42,15 @@ The machine's `reason` attribute names the rule that put it in its state; `rules
 
 ## What you get
 
-Per machine, on the chosen device:
+One entity per machine, on the person or thing's device: `select.<device>_<machine>` (e.g. `select.alice_day_type`). Its state is the machine's state; pick an option to set it by hand. Attributes:
 
-| Entity | What it does |
-|---|---|
-| `select.<device>_<machine>` (e.g. `select.alice_time_day_type`) | The current state. Pick an option to set it by hand. Attributes: `previous`, `reason` (rule name, `manual`, `fallback`, …), `changed_at`, `manual`, `person`; with condition rules also `rules_state`, `override`, `override_until`; `flip_limited` while it's over its flip limit |
-| `event.<device>_<machine>_transition` | Fires on every change. The event type is the state entered; attributes `from`, `to`, `reason` |
-
-Every change also fires an `abstract_state_machine_transition` event on the bus with `entity_id`, `machine`, `from`, `to`, `reason` and `manual`.
+- `previous`, `reason` (rule name, `manual`, `fallback`, …), `changed_at`, `manual`, `person`
+- with condition rules: `rules_state` (what they say now), `override`, `override_until`
+- `flip_limited` while it's over its flip limit
 
 ### Notify when the dishwasher is done
 
-An ordinary state trigger works, because the machine is a normal entity:
+A state trigger on the machine's entity:
 
 ```yaml
 triggers:
@@ -59,6 +63,8 @@ actions:
     data:
       message: Dishwasher's done
 ```
+
+Give it a `from` (or `not_from: [unavailable, unknown]`): the entity also comes back after a restart or after you edit its machine, and a trigger with only `to: clean` would fire then too.
 
 ### Set a state from an automation, script or NFC tag
 

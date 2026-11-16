@@ -7,6 +7,7 @@ from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import Context, HomeAssistant, State, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 from homeassistant.helpers.start import async_at_started
@@ -24,17 +25,15 @@ from .const import (
     ATTR_REASON,
     ATTR_RULES_STATE,
 )
-from .data import AsmConfigEntry
-from .entity import MachineEntity
+from .data import AsmConfigEntry, unique_id
 from .runtime import MachineRuntime
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: AsmConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
-    data = entry.runtime_data
-    for subentry_id, runtime in data.machines.items():
-        async_add_entities([MachineSelect(runtime, data.device)], config_subentry_id=subentry_id)
+    thing = entry.runtime_data
+    async_add_entities([MachineSelect(runtime, thing.device) for runtime in thing.machines])
 
 
 @dataclass
@@ -77,16 +76,31 @@ class StoredStatus(ExtraStoredData):
             return None
 
 
-class MachineSelect(MachineEntity, SelectEntity, RestoreEntity):
-    """Shows the state; picking an option sets it by hand."""
+class MachineSelect(SelectEntity, RestoreEntity):
+    """Shows the state; picking an option sets it by hand.
 
-    def __init__(self, runtime: MachineRuntime, device: Any) -> None:
-        super().__init__(runtime, device, "state")
+    The device is set through ``device_entry``: the virtual device is made in
+    ``async_setup_entry``, and an existing device belongs to another integration.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, runtime: MachineRuntime, device: dr.AnyDeviceEntry | None) -> None:
+        self.runtime = runtime
+        self._attr_unique_id = unique_id(runtime.machine_id)
         self._attr_options = runtime.machine.names
+        if device is not None:
+            self.device_entry = device
 
     @property
     def name(self) -> str | None:  # type: ignore[override]
-        return self._machine_name()
+        """The machine's name, or ``None`` when it equals the device's (no "Dishwasher Dishwasher")."""
+        name = self.runtime.machine.name
+        device = self.device_entry
+        if device is not None and (device.name_by_user or device.name or "").casefold() == name.casefold():
+            return None
+        return name
 
     @property
     def current_option(self) -> str | None:
@@ -128,7 +142,6 @@ class MachineSelect(MachineEntity, SelectEntity, RestoreEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self.runtime.entity_id = self.entity_id
         self.async_on_remove(self.runtime.async_add_listener(self._changed))
         self.runtime.async_restore(await self._async_restored())
 
@@ -145,7 +158,7 @@ class MachineSelect(MachineEntity, SelectEntity, RestoreEntity):
         return _from_state(await self.async_get_last_state())
 
     @callback
-    def _changed(self, transition: engine.Transition | None, context: Context | None) -> None:
+    def _changed(self, context: Context | None) -> None:
         if context is not None:
             self.async_set_context(context)
         self.async_write_ha_state()

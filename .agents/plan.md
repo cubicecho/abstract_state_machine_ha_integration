@@ -2,7 +2,7 @@
 
 ## Goal
 
-A Home Assistant helper that lets you build **state machines** in the UI. You name the machine, add your own states, and for each state choose what moves the machine into it: HA triggers and conditions, the same pickers the automation editor uses. Each machine is a native entity, on its own, on a virtual device, or attached to an existing device. Automations react to its changes like any other entity.
+A Home Assistant integration that lets you build **state machines** in the UI. You name the machine, add your own states, and for each state choose what moves the machine into it: HA triggers and conditions, the same pickers the automation editor uses. Each machine is a native entity, on its own, on a virtual device, or attached to an existing device. Automations react to its changes like any other entity.
 
 Nothing about the states is built in. Day type, hour type, house mode and the dishwasher below are **examples of machines a user builds**, not presets.
 
@@ -15,11 +15,12 @@ See [research.md](research.md) for what exists already and why this isn't a dupl
 | Domain / name | `abstract_state_machine` ("Abstract State Machine"). Repo `cubicecho/abstract_state_machine_ha_integration` | 2026-11-15 |
 | States | **User-defined.** No preset state sets. The user adds, names, orders and removes states | 2026-11-15 |
 | Rules | **Attached to a state**: "enter this state when …". Rules use HA triggers and conditions (`TriggerSelector` / `ConditionSelector`). No rule language of our own | 2026-11-15 |
-| Grouping | **Entry = a person or thing, subentry = a machine.** An entry is a new virtual device ("Alice time"), an existing device (the dishwasher's plug, Alice's phone) or no device; its machines are `machine` subentries, entities on that device. HA 2026.10+ gives a device a single config entry, so one-entry-per-machine couldn't share a device. HA persons have no device, so "attach to Alice" means a virtual "Alice" device or her phone's device | 2026-11-15 |
-| One machine = | One subentry. **One machine per person, device or thing**, each made by the user (Alice's day type and Bob's day type are two machines) | 2026-11-15 |
+| Grouping | **Entry = a person or thing; its machines live in the entry's options (no subentries).** A person or thing is a new virtual device ("Alice"), an existing device (the dishwasher's plug, Alice's phone) or no device; its machines are entities on that device, managed from the entry's Configure (like Magic Areas). HA 2026.10+ gives a device one config entry and at most one subentry, so "entry = device, subentry = machine" left the shared device under "Devices that don't belong to a sub-entry", and "one entry, subentry = person or thing" added a level. Maybe revisit later. HA persons have no device, so "attach to Alice" means a virtual "Alice" device or her phone's device | 2026-11-15 |
+| One machine = | One item in its entry's `options.machines`, one `select`. **One machine per person, device or thing**, each made by the user (Alice's day type and Bob's day type are two machines) | 2026-11-15 |
+| Integration type | `hub` (Integrations, not Helpers) | 2026-11-15 |
 | Presets | **None in the MVP.** Examples live in docs. Maybe later: "duplicate machine" so Bob's day type starts as a copy of Alice's | 2026-11-15 |
 | State entity | `select` (options = states). Choosing an option = manual set | 2026-11-15 |
-| Events on change | Built in: `state_changed` on the select, one `event` entity per machine, and a bus event. No external hooks | 2026-11-15 |
+| Events on change | **State triggers on the select only, for now.** The event entity and bus event were dropped in 0.3.0 to keep it simple | 2026-11-15 |
 | Dependencies | None. No `transitions` library: the engine is small and pure | 2026-11-15 |
 | Manual override | Holds until the condition rules' answer changes; optional `hold` duration; `clear_override` | 2026-11-15 |
 | Trigger rule on a machine with condition rules | Holds like a manual change | 2026-11-15 |
@@ -29,7 +30,7 @@ See [research.md](research.md) for what exists already and why this isn't a dupl
 
 ## Concepts
 
-**Machine**: a name, an ordered list of **states**, and a **fallback state** (also the initial state). It lives in an entry, which decides its device (below). Optionally linked to a **person**, which is just a label for now (it shows in attributes).
+**Machine**: a name, an ordered list of **states**, and a **fallback state** (also the initial state). It belongs to a person or thing, which decides its device (below). Optionally linked to a **person**, which is just a label for now (it shows in attributes).
 
 **State**: a name, an optional icon, and its **rules**, the ways to enter it. A state with no rules is entered only by hand or by a service call.
 
@@ -66,38 +67,31 @@ A machine can mix both kinds. When a machine has condition rules and a trigger r
 
 ## Entities
 
-Per machine:
+Per machine, one `select.<device>_<machine>`: the state. Attributes: `previous`, `reason` (rule name, `manual`, `restored`, `fallback`), `changed_at`, `manual`, `person`; with condition rules `rules_state`, `override`, `override_until`; `flip_limited`.
 
-| Entity | Notes |
-|---|---|
-| `select.<name>` | State. Attributes: `previous`, `reason` (rule name, `manual`, `restored`, `fallback`), `changed_at`, `override`, `override_until`, `person` |
-| `event.<name>_transition` | One event per change. `event_types` = the states (the event type is the state entered). Attributes `from`, `to`, `reason` |
-
-Bus event `abstract_state_machine_transition`: `{entity_id, machine, from, to, reason, manual}`.
-
-That covers "dishwasher running → clean, send me a notification" three ways (state trigger with from/to, event entity trigger, event trigger). The state trigger is the one to document.
+"Dishwasher running → clean, send me a notification" is a state trigger with `from`/`to`. (An event entity and a bus event existed until 0.3.0; they were dropped to keep it simple. They'd add "real transitions only", `manual` filtering and one trigger for every machine, if that's ever wanted.)
 
 Renaming a state: the select's options change, so automations using the old name break. The options flow warns before a rename.
 
 Later, maybe: device triggers ("Dishwasher entered clean") so the automation editor reads nicely. Optional binary sensors per state ("Alice is sleeping").
 
-## Placement: entry = device
+## Placement: person or thing = device
 
-The entry, picked when it's created and changeable from its **Configure** button:
+Each person or thing (entry), picked when it's created and changeable from its Configure → **Rename, or change the device**:
 
-1. **New virtual device**: the entry makes a device with its own name ("Alice time", "House"). All its machines are entities on it.
+1. **New virtual device**: a device with the entry's name ("Alice", "House"). All its machines are entities on it.
 2. **Existing device**: the machines' entities attach to a device you already have (the dishwasher's smart plug, Alice's phone), the way template helpers do (`entity.device_entry`). We don't join that device's config entry.
-3. **No device**: plain helper entities, like an `input_select`.
+3. **No device**: just the entities, on no device.
 
-Moving an entry keeps entity ids and states. Moving off a virtual device deletes it (after the entities have moved, so they aren't removed with it).
+Moving keeps entity ids and states. Moving off a virtual device deletes it (after the entities have moved, so they aren't removed with it).
 
-## Config and subentry flows
+## Config and options flows
 
-**Entry** (Settings → Devices & services → Add integration → Abstract State Machine): a menu (new virtual device / existing device / no device), then a name or a device. Creating it opens the first machine's flow straight away (as core's Bayesian helper does).
+**Entry** (Settings → Devices & services → Add integration → Abstract State Machine, once per person or thing): a menu (new virtual device / existing device / no device), then a name or a device, then its first machine: name, states (a list: type a name, press Enter), optional person; then the fallback state.
 
-**Machine** (+ Add state machine on the integration page): name, states (a list: type a name, press Enter), optional person; then the fallback state.
+**Configure** (the entry's options flow) is a menu: **Edit a state machine** (picks one if there are several), **Add a state machine**, **Remove a state machine** (when there's more than one), **Rename, or change the device**.
 
-**Edit a machine** (its ⋮ → Reconfigure) is a menu:
+**Edit a state machine** is a menu:
 
 - **Add, remove or reorder states** (one list; the order is the priority order).
 - **Rename a state**: keeps its place, icon, rules and the machine's current state (carried across the reload in `runtime._RENAMES`).
@@ -105,7 +99,6 @@ Moving an entry keeps entity ids and states. Moving off a virtual device deletes
 - **State icons**: the select shows the current state's icon.
 - Phase 2: **Rules**: pick a state → list its rules → add / edit / remove. Edit = name, kind (trigger or condition), `from` states, triggers (`TriggerSelector`), conditions (`ConditionSelector`).
 
-**Entry options**: placement.
 
 Forms are HA's standard selectors. If the step-by-step menus feel clumsy in the preview, the fallback is a sidebar panel later (like map-fusion's), maybe with a diagram of the machine.
 
@@ -148,7 +141,7 @@ Response-only, later: `explain`, which lists each rule and whether it matches ri
  │                          │   1-min tick, debounce, startup wait, loop guard
  └──────────┬───────────────┘
             ▼
- select.py (state) ── event.py (transitions) ── bus event ── services.py
+ select.py (state) ── services.py
 ```
 
 Planned files under `custom_components/abstract_state_machine/`:
@@ -158,11 +151,11 @@ Planned files under `custom_components/abstract_state_machine/`:
 | `model.py` | Dataclasses, parsing from `entry.options`, validation: unique state names, `from` states exist, fallback exists. Pure |
 | `engine.py` | Pure decisions: manual set, trigger rule `from` check, first matching condition rule, override expiry, reason. Tested without HA |
 | `runtime.py` | One per machine. Sets up triggers and condition listeners, calls the engine, writes state, fires events. (Phase 2) |
-| `config_flow.py` | Entry flow, entry options (placement), machine subentry flow and reconfigure menu (above) |
-| `select.py`, `event.py` | Entities. `RestoreEntity` on the select |
+| `config_flow.py` | Config flow and the Configure (options) menus (above) |
+| `select.py` | The entity. `RestoreEntity` |
 | `services.py`, `services.yaml` | Above |
 
-The entry's placement is in `entry.options` (so its options flow can edit it); `entry.data` is empty. Each machine is in its subentry's `data` (states, fallback, person; rules from phase 2) and title (its name).
+`entry.data` is empty. The entry's title is the person or thing's name, and `options` = `placement`, `device_id` (existing device) and `machines` (each: `id`, `name`, states with rules, fallback, person, max_flips).
 
 **Startup**: hold the restored state until `EVENT_HOMEASSISTANT_STARTED`, then evaluate condition rules. Otherwise unavailable inputs at boot flip day type to the fallback and fire bogus transitions.
 
@@ -185,6 +178,7 @@ The entry's placement is in `entry.options` (so its options flow can edit it); `
    - Rule changes save straight away and the flow stays on the rule list ("Done" closes it), so several rules can be added in one go.
    - Labels in the rule list (Add / Edit / Delete …) are English only: they're built per rule, so they can't come from translations.
    - Condition rules re-check via HA 2026.10's condition checkers (`async_track_changes` / `needs_polling`), not by extracting entity ids.
+   - **Restructured in 0.3.0** after looking at the integration page: `integration_type: hub` (not a helper); entry = person or thing with its machines in its options, no subentries (so no "Devices that don't belong to a sub-entry"); machines managed from Configure. No event entity or bus event. 95 tests.
 3. **Composition and calendars.** Calendar matching ("any current event whose title contains PTO"): a template first, our own condition type if templates are too painful. README recipes for the examples.
 4. **Extras.** Duplicate machine, `explain` service, device triggers, per-state binary sensors, maybe a panel or card that draws the machine (states as nodes, rules as edges, current state lit).
 

@@ -10,11 +10,16 @@ from .runtime import MachineRuntime
 
 
 @dataclass
-class AsmData:
-    """One config entry: the device its machines sit on, and the machines."""
+class Thing:
+    """One person or thing (a config entry): the device its machines sit on, and the machines."""
 
     device: dr.AnyDeviceEntry | None
-    machines: dict[str, MachineRuntime] = field(default_factory=dict)  # by subentry id
+    machines: list[MachineRuntime] = field(default_factory=list)
 
 
-type AsmConfigEntry = ConfigEntry[AsmData]
+def unique_id(machine_id: str) -> str:
+    """A machine's select entity's unique id."""
+    return f"{machine_id}_state"
+
+
+type AsmConfigEntry = ConfigEntry[Thing]

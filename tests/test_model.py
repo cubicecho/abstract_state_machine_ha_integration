@@ -27,16 +27,31 @@ def test_clean_state_names_rejects(names: list[str], key: str) -> None:
 
 
 def test_new_machine_fallback_defaults_to_first() -> None:
-    data = model.new_machine_data(["a", "b"], None, None)
-    assert data == {"states": [{"name": "a"}, {"name": "b"}], "fallback": "a", "person": None}
-    assert model.new_machine_data(["a", "b"], "b", "person.alice")["fallback"] == "b"
+    data = model.new_machine_data("M", ["a", "b"], None, None, machine_id="m1")
+    assert data == {"id": "m1", "name": "M", "states": [{"name": "a"}, {"name": "b"}], "fallback": "a", "person": None}
+    assert model.new_machine_data("M", ["a", "b"], "b", "person.alice")["fallback"] == "b"
+    assert len(model.new_machine_data("M", ["a", "b"], None, None)["id"]) == 32  # a fresh uuid
+
+
+def test_machines_of_a_thing() -> None:
+    a, b = model.new_machine_data("A", ["x", "y"], None, None, "a"), model.new_machine_data("B", ["x", "y"], None, None, "b")
+    thing = {"placement": "none", "machines": [a, {"name": "no id"}, "junk"]}
+    assert model.machines_of(thing) == [a]
+    thing = model.with_machine(thing, b)
+    assert [m["id"] for m in thing["machines"]] == ["a", "b"]
+    assert thing["placement"] == "none"
+    thing = model.with_machine(thing, {**a, "name": "A2"})  # replaced in place
+    assert [m["name"] for m in thing["machines"]] == ["A2", "B"]
+    assert model.find_machine(thing, "b") == b
+    assert model.find_machine(thing, "zz") is None
+    assert model.machines_of(model.without_machine(thing, "a")) == [b]
 
 
 def test_parse_is_tolerant() -> None:
     machine = model.parse(
-        "Odd",
         {"states": [{"name": "a", "icon": "mdi:a"}, {"name": "A"}, {"nope": 1}, "junk", {"name": " b "}], "fallback": "zz"},
     )
+    assert machine.name == "State machine"  # no name stored
     assert machine.names == ["a", "b"]
     assert machine.fallback == "a"
     assert machine.state("a") == model.StateDef("a", "mdi:a")
@@ -87,8 +102,8 @@ def test_with_icons_sets_and_clears() -> None:
 
 def test_parse_rules() -> None:
     machine = model.parse(
-        "Dishwasher",
         {
+            "name": "Dishwasher",
             "states": [
                 {"name": "running", "rules": [
                     _trig("go", ["cleared", "gone"]),
@@ -112,11 +127,11 @@ def test_parse_rules() -> None:
 
 @pytest.mark.parametrize(("value", "expected"), [(None, 10), ("x", 10), (0, 1), (5, 5), (1000, 100)])
 def test_max_flips_clamped(value: object, expected: int) -> None:
-    assert model.parse("m", {"states": [{"name": "a"}, {"name": "b"}], "max_flips": value}).max_flips == expected
+    assert model.parse({"states": [{"name": "a"}, {"name": "b"}], "max_flips": value}).max_flips == expected
 
 
 def test_upsert_find_and_remove_rule() -> None:
-    data = model.new_machine_data(["a", "b", "c"], "a", None)
+    data = model.new_machine_data("M", ["a", "b", "c"], "a", None)
     data = model.upsert_rule(data, "b", _trig("r1", ["a", "zz"]))
     data = model.upsert_rule(data, "b", _trig("r2", []))
     assert [r["id"] for r in data["states"][1]["rules"]] == ["r1", "r2"]
@@ -132,8 +147,8 @@ def test_upsert_find_and_remove_rule() -> None:
 
 
 def test_with_settings() -> None:
-    data = model.with_settings(model.new_machine_data(["a", "b"], "a", "person.x"), "b", "", 7)
-    assert (data["fallback"], data["person"], data["max_flips"]) == ("b", None, 7)
+    data = model.with_settings(model.new_machine_data("M", ["a", "b"], "a", "person.x"), "N", "b", "", 7)
+    assert (data["name"], data["fallback"], data["person"], data["max_flips"]) == ("N", "b", None, 7)
 
 
 def test_referenced_entities() -> None:

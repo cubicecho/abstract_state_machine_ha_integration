@@ -1,4 +1,4 @@
-"""One running machine: its status, its rules wired to HA, and its events."""
+"""One running machine: its status and its rules wired to HA."""
 from __future__ import annotations
 
 import copy
@@ -21,15 +21,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.hass_dict import HassKey
 
 from . import engine
-from .const import (
-    ATTR_FROM,
-    ATTR_MACHINE,
-    ATTR_MANUAL,
-    ATTR_REASON,
-    ATTR_TO,
-    DOMAIN,
-    EVENT_TRANSITION,
-)
+from .const import DOMAIN
 from .model import KIND_CONDITION, KIND_TRIGGER, MachineDef, RuleDef
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,17 +29,17 @@ _LOGGER = logging.getLogger(__name__)
 # Rule-driven changes are counted over this window against ``max_flips``.
 FLIP_WINDOW = timedelta(minutes=1)
 
-type Listener = Callable[[engine.Transition | None, Context | None], None]
+type Listener = Callable[[Context | None], None]
 type Checker = condition_helper.ConditionChecker
 
 # Renames made in the reconfigure flow, waiting for the reload that follows,
-# so a machine sitting in a renamed state stays in it: {subentry_id: {old: new}}.
+# so a machine sitting in a renamed state stays in it: {machine_id: {old: new}}.
 _RENAMES: HassKey[dict[str, dict[str, str]]] = HassKey(f"{DOMAIN}_renames")
 
 
 @callback
-def async_note_rename(hass: HomeAssistant, subentry_id: str, old: str, new: str) -> None:
-    renames = hass.data.setdefault(_RENAMES, {}).setdefault(subentry_id, {})
+def async_note_rename(hass: HomeAssistant, machine_id: str, old: str, new: str) -> None:
+    renames = hass.data.setdefault(_RENAMES, {}).setdefault(machine_id, {})
     for earlier, target in renames.items():
         if target == old:
             renames[earlier] = new
@@ -65,18 +57,17 @@ async def async_validate_conditions(hass: HomeAssistant, raw: Any) -> list[Any]:
 
 
 class MachineRuntime:
-    """The live side of one machine (one config subentry).
+    """The live side of one machine.
 
     The select entity owns persistence: it restores the last status, hands
     it to ``async_restore``, then calls ``async_start`` once HA has started.
     """
 
-    def __init__(self, hass: HomeAssistant, subentry_id: str, machine: MachineDef) -> None:
+    def __init__(self, hass: HomeAssistant, machine: MachineDef) -> None:
         self.hass = hass
-        self.subentry_id = subentry_id
+        self.machine_id = machine.id
         self.machine = machine
         self.status: engine.Status | None = None
-        self.entity_id: str | None = None  # the select's, once added
         self.computed: engine.Computed | None = None  # what the condition rules say
         self.flip_limited = False
         self._listeners: list[Listener] = []
@@ -91,11 +82,11 @@ class MachineRuntime:
 
     @property
     def issue_id(self) -> str:
-        return f"flip_limit_{self.subentry_id}"
+        return f"flip_limit_{self.machine_id}"
 
     @callback
     def async_add_listener(self, listener: Listener) -> Callable[[], None]:
-        """Call ``listener(transition, context)`` on every change (transition ``None``: attributes only)."""
+        """Call ``listener(context)`` on every change of state or attributes."""
         self._listeners.append(listener)
         return lambda: self._listeners.remove(listener)
 
@@ -103,8 +94,8 @@ class MachineRuntime:
 
     @callback
     def async_restore(self, restored: engine.Status | None) -> None:
-        """Start from the restored status, or the fallback. Fires no events."""
-        renames = self.hass.data.get(_RENAMES, {}).pop(self.subentry_id, {})
+        """Start from the restored status, or the fallback. Not a change of state."""
+        renames = self.hass.data.get(_RENAMES, {}).pop(self.machine_id, {})
         if restored is not None and renames:
             restored = replace(
                 restored,
@@ -114,7 +105,7 @@ class MachineRuntime:
                 if restored.held_against else None,
             )
         self.status = engine.initial(self.machine, restored, dt_util.utcnow())
-        self._notify(None, None)
+        self._notify(None)
 
     async def async_start(self) -> None:
         """Wire up the rules (after HA has started, so inputs exist), then apply condition rules."""
@@ -280,25 +271,11 @@ class MachineRuntime:
             return
         self.status = status
         self._schedule_hold_timer()
-        self._notify(transition, context)
-        if transition is None:
-            return
-        self.hass.bus.async_fire(
-            EVENT_TRANSITION,
-            {
-                "entity_id": self.entity_id,
-                ATTR_MACHINE: self.machine.name,
-                ATTR_FROM: transition.from_state,
-                ATTR_TO: transition.to_state,
-                ATTR_REASON: transition.reason,
-                ATTR_MANUAL: transition.manual,
-            },
-            context=context,
-        )
+        self._notify(context)
 
-    def _notify(self, transition: engine.Transition | None, context: Context | None) -> None:
+    def _notify(self, context: Context | None) -> None:
         for listener in list(self._listeners):
-            listener(transition, context)
+            listener(context)
 
     def _allow_flip(self, now: datetime) -> bool:
         """At most ``max_flips`` rule-driven changes per minute: stops loops between machines."""
@@ -321,7 +298,7 @@ class MachineRuntime:
                 is_fixable=False, severity=ir.IssueSeverity.WARNING, translation_key="flip_limit",
                 translation_placeholders={"machine": self.machine.name, "max_flips": str(self.machine.max_flips)},
             )
-            self._notify(None, None)
+            self._notify(None)
         if self._resume_timer is None:
             @callback
             def resume(now: datetime) -> None:

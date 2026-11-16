@@ -1,4 +1,4 @@
-"""The select and event entities, the bus event and set_state."""
+"""The select entity, its devices, set_state and restoring."""
 from __future__ import annotations
 
 import pytest
@@ -6,23 +6,17 @@ from homeassistant.core import Context, HomeAssistant, State
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_capture_events, mock_restore_cache
+from pytest_homeassistant_custom_component.common import MockConfigEntry, mock_restore_cache
 
-from custom_components.abstract_state_machine.const import (
-    DOMAIN,
-    EVENT_TRANSITION,
-    PLACEMENT_EXISTING,
-    PLACEMENT_NONE,
-)
+from custom_components.abstract_state_machine.const import DOMAIN, PLACEMENT_EXISTING, PLACEMENT_NONE
 
-from .common import DISHWASHER_STATES, add_entry, machine
+from .common import DISHWASHER_STATES, add_thing, machine
 
 SELECT = "select.alice_time_day_type"
-EVENT = "event.alice_time_day_type_transition"
 
 
 async def _alice(hass: HomeAssistant) -> MockConfigEntry:
-    return await add_entry(
+    return await add_thing(
         hass,
         "Alice time",
         [
@@ -32,7 +26,7 @@ async def _alice(hass: HomeAssistant) -> MockConfigEntry:
     )
 
 
-async def test_machines_are_entities_on_one_virtual_device(hass: HomeAssistant) -> None:
+async def test_machines_are_entities_on_the_entrys_device(hass: HomeAssistant) -> None:
     entry = await _alice(hass)
     state = hass.states.get(SELECT)
     assert state is not None
@@ -42,21 +36,28 @@ async def test_machines_are_entities_on_one_virtual_device(hass: HomeAssistant) 
     assert state.attributes["previous"] is None
     assert state.attributes["person"] == "person.alice"
     assert hass.states.get("select.alice_time_hour_type").state == "free"
-    assert hass.states.get(EVENT).state == "unknown"  # no change yet
 
     device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
     assert device is not None
     assert device.name == "Alice time"
+    assert device.config_subentry_id is None  # no subentries at all
     entities = er.async_entries_for_device(er.async_get(hass), device.id)
-    assert {e.entity_id for e in entities} == {
-        SELECT, EVENT, "select.alice_time_hour_type", "event.alice_time_hour_type_transition",
-    }
-    assert {e.config_subentry_id for e in entities} == set(entry.subentries)
+    assert {e.entity_id for e in entities} == {SELECT, "select.alice_time_hour_type"}
+    assert {e.config_subentry_id for e in entities} == {None}
 
 
-async def test_picking_an_option_changes_state_and_fires_events(hass: HomeAssistant) -> None:
+async def test_each_entry_has_its_own_device(hass: HomeAssistant) -> None:
+    alice = await add_thing(hass, "Alice", [machine("Day type", ["workday", "weekend"])])
+    dishwasher = await add_thing(hass, "Dishwasher", [machine("Mode", DISHWASHER_STATES)])
+    dev_reg = dr.async_get(hass)
+    assert [d.name for d in dr.async_entries_for_config_entry(dev_reg, alice.entry_id)] == ["Alice"]
+    assert [d.name for d in dr.async_entries_for_config_entry(dev_reg, dishwasher.entry_id)] == ["Dishwasher"]
+    assert hass.states.get("select.alice_day_type") is not None
+    assert hass.states.get("select.dishwasher_mode") is not None
+
+
+async def test_picking_an_option_changes_state(hass: HomeAssistant) -> None:
     await _alice(hass)
-    bus = async_capture_events(hass, EVENT_TRANSITION)
     context = Context()
     await hass.services.async_call(
         "select", "select_option", {"entity_id": SELECT, "option": "holiday"}, blocking=True, context=context
@@ -68,26 +69,10 @@ async def test_picking_an_option_changes_state_and_fires_events(hass: HomeAssist
     assert state.attributes["manual"] is True
     assert state.context.id == context.id
 
-    event = hass.states.get(EVENT)
-    assert event.attributes["event_type"] == "holiday"
-    assert event.attributes["from"] == "weekend"
-    assert event.attributes["to"] == "holiday"
-    assert event.attributes["event_types"] == ["workday", "weekend", "holiday"]
 
-    assert len(bus) == 1
-    assert bus[0].data == {
-        "entity_id": SELECT, "machine": "Day type", "from": "weekend", "to": "holiday",
-        "reason": "manual", "manual": True,
-    }
-    assert bus[0].context.id == context.id
-
-
-async def test_same_state_fires_nothing(hass: HomeAssistant) -> None:
+async def test_no_event_entities(hass: HomeAssistant) -> None:
     await _alice(hass)
-    bus = async_capture_events(hass, EVENT_TRANSITION)
-    await hass.services.async_call("select", "select_option", {"entity_id": SELECT, "option": "weekend"}, blocking=True)
-    assert bus == []
-    assert hass.states.get(EVENT).state == "unknown"
+    assert hass.states.async_entity_ids("event") == []
 
 
 async def test_set_state_service_records_reason(hass: HomeAssistant) -> None:
@@ -98,7 +83,6 @@ async def test_set_state_service_records_reason(hass: HomeAssistant) -> None:
     state = hass.states.get(SELECT)
     assert state.state == "workday"
     assert state.attributes["reason"] == "NFC tag"
-    assert hass.states.get(EVENT).attributes["reason"] == "NFC tag"
 
 
 async def test_set_state_unknown_state(hass: HomeAssistant) -> None:
@@ -133,7 +117,7 @@ async def test_existing_device(hass: HomeAssistant) -> None:
     plug = dr.async_get(hass).async_get_or_create(
         config_entry_id=plug_entry.entry_id, identifiers={("test", "plug")}, name="Dishwasher plug"
     )
-    entry = await add_entry(
+    entry = await add_thing(
         hass, "Dishwasher plug", [machine("Mode", DISHWASHER_STATES)], placement=PLACEMENT_EXISTING, device_id=plug.id
     )
     reg = er.async_get(hass).async_get("select.dishwasher_plug_mode")
@@ -146,24 +130,22 @@ async def test_existing_device(hass: HomeAssistant) -> None:
 
 
 async def test_no_device(hass: HomeAssistant) -> None:
-    entry = await add_entry(hass, "House", [machine("House mode", ["home", "away", "sleeping"])], placement=PLACEMENT_NONE)
+    entry = await add_thing(hass, "House", [machine("House mode", ["home", "away", "sleeping"])], placement=PLACEMENT_NONE)
     reg = er.async_get(hass).async_get("select.house_mode")
     assert reg is not None
     assert reg.device_id is None
-    assert hass.states.get("event.house_mode_transition") is not None
     assert dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id) == []
 
 
 async def test_machine_named_like_its_device_isnt_doubled(hass: HomeAssistant) -> None:
-    await add_entry(hass, "Dishwasher", [machine("Dishwasher", DISHWASHER_STATES)])
+    await add_thing(hass, "Dishwasher", [machine("Dishwasher", DISHWASHER_STATES)])
     assert hass.states.get("select.dishwasher").attributes["friendly_name"] == "Dishwasher"
-    assert hass.states.get("event.dishwasher_transition").attributes["friendly_name"] == "Dishwasher Transition"
 
 
 async def test_state_icon(hass: HomeAssistant) -> None:
-    sub = machine("Mode", DISHWASHER_STATES)
-    sub["data"]["states"][0]["icon"] = "mdi:dishwasher-off"
-    await add_entry(hass, "Dishwasher", [sub])
+    m = machine("Mode", DISHWASHER_STATES)
+    m["states"][0]["icon"] = "mdi:dishwasher-off"
+    await add_thing(hass, "Dishwasher", [m])
     assert hass.states.get("select.dishwasher_mode").attributes["icon"] == "mdi:dishwasher-off"
     await hass.services.async_call(
         "select", "select_option", {"entity_id": "select.dishwasher_mode", "option": "running"}, blocking=True

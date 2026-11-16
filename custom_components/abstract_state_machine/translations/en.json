@@ -3,16 +3,16 @@
     "step": {
       "user": {
         "title": "Add a person or thing",
-        "description": "Its state machines (day type, hour type, dishwasher mode, …) are added to it as entities. Where should they go?",
+        "description": "Its state machines (day type, hour type, dishwasher mode, …) become entities. Where should they go?",
         "menu_options": {
           "virtual_device": "A new virtual device",
           "existing_device": "A device I already have",
-          "none": "No device (plain helper entities)"
+          "none": "No device (just the entities)"
         }
       },
       "virtual_device": {
         "title": "New virtual device",
-        "description": "A device just for its state machines, e.g. \"Alice time\" or \"House\".",
+        "description": "A device just for its state machines, e.g. \"Alice\" or \"House\".",
         "data": {
           "name": "Device name"
         }
@@ -30,155 +30,187 @@
         "data": {
           "name": "Name"
         }
+      },
+      "machine": {
+        "title": "New state machine for {thing}",
+        "description": "Name it and list its states. Type a state and press Enter to add the next. The order matters for condition rules: the first state from the top whose rules match wins. Add rules afterwards: the entry's Configure → Edit a state machine → Rules.",
+        "data": {
+          "name": "Name",
+          "states": "States",
+          "person": "Person (optional)"
+        },
+        "data_description": {
+          "person": "Who this machine is about, e.g. Alice for \"Alice day type\". Just a label for now."
+        }
+      },
+      "fallback": {
+        "title": "Fallback state",
+        "description": "Where the machine starts, and where it goes when no rule matches.",
+        "data": {
+          "fallback": "Fallback state"
+        }
       }
     },
     "error": {
       "name_required": "Enter a name.",
+      "too_few_states": "Add at least two states.",
+      "duplicate_state": "Each state needs a different name (case doesn't count).",
+      "reserved_state": "\"unknown\" and \"unavailable\" are Home Assistant's own states. Pick another name.",
+      "state_too_long": "State names can be at most 255 characters.",
       "device_not_found": "That device no longer exists."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Where the state machines go",
-        "description": "Moving keeps each machine's state and entity IDs.",
+        "title": "Edit {thing}",
+        "description": "State machines: {machines}.",
+        "menu_options": {
+          "edit_machine": "Edit a state machine: rules, states, settings",
+          "add_machine": "Add a state machine",
+          "remove_machine": "Remove a state machine",
+          "placement": "Rename, or change the device"
+        }
+      },
+      "machine": {
+        "title": "New state machine for {thing}",
+        "description": "Name it and list its states. Type a state and press Enter to add the next. The order matters for condition rules: the first state from the top whose rules match wins. Add rules afterwards: Configure → Edit a state machine → Rules.",
         "data": {
-          "placement": "Placement",
+          "name": "Name",
+          "states": "States",
+          "person": "Person (optional)"
+        },
+        "data_description": {
+          "person": "Who this machine is about, e.g. Alice for \"Alice day type\". Just a label for now."
+        }
+      },
+      "fallback": {
+        "title": "Fallback state",
+        "description": "Where the machine starts, and where it goes when no rule matches.",
+        "data": {
+          "fallback": "Fallback state"
+        }
+      },
+      "edit_machine": {
+        "title": "Edit a state machine",
+        "data": {
+          "machine": "State machine"
+        }
+      },
+      "remove_machine": {
+        "title": "Remove a state machine",
+        "description": "Its entity is removed. Automations that use it stop working. To remove the last one, delete the whole entry.",
+        "data": {
+          "machine": "State machine"
+        }
+      },
+      "placement": {
+        "title": "Name and device",
+        "description": "Moving keeps each machine's state and entity ID.",
+        "data": {
+          "name": "Name",
+          "placement": "Where the state machines go",
           "device_id": "Device (for \"A device I already have\")"
         }
+      },
+      "machine_menu": {
+        "title": "Edit {machine}",
+        "menu_options": {
+          "rules": "Rules: what moves the machine into each state",
+          "edit_states": "Add, remove or reorder states",
+          "rename_state": "Rename a state",
+          "settings": "Name, fallback, person and flip limit",
+          "icons": "State icons"
+        }
+      },
+      "edit_states": {
+        "title": "States",
+        "description": "The order is the priority order. Removing the current state sends the machine to its fallback. Automations that use a removed state stop matching.",
+        "data": {
+          "states": "States"
+        }
+      },
+      "rename_state": {
+        "title": "Rename a state",
+        "description": "The machine keeps its place. Automations that use the old name need updating.",
+        "data": {
+          "state": "State",
+          "new_name": "New name"
+        }
+      },
+      "settings": {
+        "title": "Name, fallback, person and flip limit",
+        "data": {
+          "name": "Name",
+          "fallback": "Fallback state",
+          "person": "Person (optional)",
+          "max_flips": "Flip limit (rule changes per minute)"
+        },
+        "data_description": {
+          "max_flips": "After this many rule-driven changes within a minute, the machine ignores its rules until the minute is up. Stops machines that read each other from flipping forever."
+        }
+      },
+      "icons": {
+        "title": "State icons",
+        "description": "The machine's entity shows the icon of its current state."
+      },
+      "rules": {
+        "title": "Rules",
+        "description": "Rules belong to the state they lead to. Pick a state to see and edit its rules.\n\n- **Trigger rules** move the machine when something happens, e.g. power drops below 3 W for 15 minutes.\n- **Condition rules** keep the machine in the state while something is true. The first state from the top with a matching rule wins; when none match, the machine goes to its fallback ({fallback}).\n\nPicking a state by hand (or a trigger rule) holds until the condition rules' answer changes.",
+        "data": {
+          "state": "State"
+        }
+      },
+      "rules_list": {
+        "title": "Rules into {state}",
+        "description": "{rules}",
+        "data": {
+          "action": "What next?"
+        }
+      },
+      "trigger_rule": {
+        "title": "Trigger rule into {state}",
+        "description": "When any of the triggers fires, and the machine is in one of the **From** states (any, if empty), and the conditions pass, it goes to {state}.",
+        "data": {
+          "name": "Name",
+          "from": "From (optional)",
+          "triggers": "Triggers",
+          "conditions": "Only if (optional)"
+        },
+        "data_description": {
+          "name": "Shown as the machine's reason when this rule moves it."
+        }
+      },
+      "condition_rule": {
+        "title": "Condition rule for {state}",
+        "description": "While all of these conditions are true, the machine is in {state}, unless a state above it also has a matching rule.",
+        "data": {
+          "name": "Name",
+          "conditions": "Conditions"
+        },
+        "data_description": {
+          "name": "Shown as the machine's reason while this rule holds it."
+        }
+      },
+      "loop_warning": {
+        "title": "These machines read each other",
+        "description": "With this rule, the machines form a loop: {loop}. They can keep changing each other. Each machine stops following its rules for a minute after {max_flips} rule changes in a minute (its flip limit, under Name, fallback, person and flip limit).\n\nSave the rule anyway?"
       }
     },
     "error": {
+      "name_required": "Enter a name.",
+      "too_few_states": "Add at least two states.",
+      "duplicate_state": "Each state needs a different name (case doesn't count).",
+      "reserved_state": "\"unknown\" and \"unavailable\" are Home Assistant's own states. Pick another name.",
+      "state_too_long": "State names can be at most 255 characters.",
+      "triggers_required": "Add at least one trigger.",
+      "conditions_required": "Add at least one condition.",
+      "invalid_triggers": "These triggers aren't valid: {error}",
+      "invalid_conditions": "These conditions aren't valid: {error}",
+      "duplicate_machine": "Another state machine here already has that name.",
       "device_required": "Pick a device.",
-      "device_not_found": "That device no longer exists."
-    }
-  },
-  "config_subentries": {
-    "machine": {
-      "initiate_flow": {
-        "user": "Add state machine",
-        "reconfigure": "Edit state machine"
-      },
-      "entry_type": "State machine",
-      "step": {
-        "user": {
-          "title": "New state machine on {entry}",
-          "description": "Name it and list its states. Type a state and press Enter to add the next. The order matters for condition rules: the first state from the top whose rules match wins. Add rules afterwards from the machine's ⋮ → Reconfigure → Rules.",
-          "data": {
-            "name": "Name",
-            "states": "States",
-            "person": "Person (optional)"
-          },
-          "data_description": {
-            "person": "Who this machine is about, e.g. Alice for \"Alice day type\". Just a label for now."
-          }
-        },
-        "fallback": {
-          "title": "Fallback state",
-          "description": "Where the machine starts, and where it goes when no rule matches.",
-          "data": {
-            "fallback": "Fallback state"
-          }
-        },
-        "reconfigure": {
-          "title": "Edit {machine}",
-          "menu_options": {
-            "rules": "Rules: what moves the machine into each state",
-            "edit_states": "Add, remove or reorder states",
-            "rename_state": "Rename a state",
-            "settings": "Name, fallback, person and flip limit",
-            "icons": "State icons"
-          }
-        },
-        "edit_states": {
-          "title": "States",
-          "description": "The order is the priority order. Removing the current state sends the machine to its fallback. Automations that use a removed state stop matching.",
-          "data": {
-            "states": "States"
-          }
-        },
-        "rename_state": {
-          "title": "Rename a state",
-          "description": "The machine keeps its place. Automations that use the old name need updating.",
-          "data": {
-            "state": "State",
-            "new_name": "New name"
-          }
-        },
-        "settings": {
-          "title": "Name, fallback, person and flip limit",
-          "data": {
-            "name": "Name",
-            "fallback": "Fallback state",
-            "person": "Person (optional)",
-            "max_flips": "Flip limit (rule changes per minute)"
-          },
-          "data_description": {
-            "max_flips": "After this many rule-driven changes within a minute, the machine ignores its rules until the minute is up. Stops machines that read each other from flipping forever."
-          }
-        },
-        "icons": {
-          "title": "State icons",
-          "description": "The machine's entity shows the icon of its current state."
-        },
-        "rules": {
-          "title": "Rules",
-          "description": "Rules belong to the state they lead to. Pick a state to see and edit its rules.\n\n- **Trigger rules** move the machine when something happens, e.g. power drops below 3 W for 15 minutes.\n- **Condition rules** keep the machine in the state while something is true. The first state from the top with a matching rule wins; when none match, the machine goes to its fallback ({fallback}).\n\nPicking a state by hand (or a trigger rule) holds until the condition rules' answer changes.",
-          "data": {
-            "state": "State"
-          }
-        },
-        "rules_list": {
-          "title": "Rules into {state}",
-          "description": "{rules}",
-          "data": {
-            "action": "What next?"
-          }
-        },
-        "trigger_rule": {
-          "title": "Trigger rule into {state}",
-          "description": "When any of the triggers fires, and the machine is in one of the **From** states (any, if empty), and the conditions pass, it goes to {state}.",
-          "data": {
-            "name": "Name",
-            "from": "From (optional)",
-            "triggers": "Triggers",
-            "conditions": "Only if (optional)"
-          },
-          "data_description": {
-            "name": "Shown as the machine's reason when this rule moves it."
-          }
-        },
-        "condition_rule": {
-          "title": "Condition rule for {state}",
-          "description": "While all of these conditions are true, the machine is in {state}, unless a state above it also has a matching rule.",
-          "data": {
-            "name": "Name",
-            "conditions": "Conditions"
-          },
-          "data_description": {
-            "name": "Shown as the machine's reason while this rule holds it."
-          }
-        },
-        "loop_warning": {
-          "title": "These machines read each other",
-          "description": "With this rule, the machines form a loop: {loop}. They can keep changing each other. Each machine stops following its rules for a minute after {max_flips} rule changes in a minute (its flip limit, under Name, fallback, person and flip limit).\n\nSave the rule anyway?"
-        }
-      },
-      "error": {
-        "name_required": "Enter a name.",
-        "too_few_states": "Add at least two states.",
-        "duplicate_state": "Each state needs a different name (case doesn't count).",
-        "reserved_state": "\"unknown\" and \"unavailable\" are Home Assistant's own states. Pick another name.",
-        "state_too_long": "State names can be at most 255 characters.",
-        "unknown_state": "That state no longer exists.",
-        "triggers_required": "Add at least one trigger.",
-        "conditions_required": "Add at least one condition.",
-        "invalid_triggers": "These triggers aren't valid: {error}",
-        "invalid_conditions": "These conditions aren't valid: {error}"
-      },
-      "abort": {
-        "reconfigure_successful": "Saved."
-      }
+      "device_not_found": "That device no longer exists.",
+      "unknown_state": "That state no longer exists."
     }
   },
   "selector": {
@@ -209,7 +241,7 @@
         },
         "reason": {
           "name": "Reason",
-          "description": "Shown in the machine's reason attribute and its transition event. Defaults to \"manual\"."
+          "description": "Shown in the machine's reason attribute. Defaults to \"manual\"."
         },
         "hold": {
           "name": "Hold for",
@@ -225,7 +257,7 @@
   "issues": {
     "flip_limit": {
       "title": "{machine} is changing state too often",
-      "description": "{machine} changed state {max_flips} times within a minute because of its rules, so it ignores them until the minute is up. Its rules may form a loop with another machine's. Check its rules, or raise its flip limit (the machine's ⋮ → Reconfigure → Name, fallback, person and flip limit). This goes away after a restart or when the machine is edited."
+      "description": "{machine} changed state {max_flips} times within a minute because of its rules, so it ignores them until the minute is up. Its rules may form a loop with another machine's. Check its rules, or raise its flip limit (the entry's Configure → Edit a state machine → Name, fallback, person and flip limit). This goes away after a restart or when the machine is edited."
     }
   }
 }

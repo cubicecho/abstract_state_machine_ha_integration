@@ -1,29 +1,19 @@
 """Flows.
 
-- Config flow: one entry per person or thing. A new virtual device, an
-  existing device, or no device. Creating one goes straight on to its first
-  machine.
-- Options flow: change where the entry's entities sit.
-- Subentry flow ("machine"): add a machine; reconfigure its rules, states,
-  names, fallback, person, flip limit and icons.
+- Config flow: one entry per person or thing (a new virtual device, an
+  existing device, or no device), with its first machine.
+- Options flow (Configure): add, edit or remove machines, rename, or move
+  them to another device. Editing a machine covers its rules, states, names,
+  fallback, person, flip limit and icons.
 """
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 import probatio as vol  # HA 2026.10+ validates with probatio
-from homeassistant.config_entries import (
-    SOURCE_USER,
-    ConfigEntry,
-    ConfigFlow,
-    ConfigFlowResult,
-    ConfigSubentryFlow,
-    FlowType,
-    OptionsFlow,
-    SubentryFlowContext,
-    SubentryFlowResult,
-)
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
@@ -34,6 +24,7 @@ from . import model
 from .const import (
     CONF_DEVICE_ID,
     CONF_FALLBACK,
+    CONF_MACHINES,
     CONF_MAX_FLIPS,
     CONF_PERSON,
     CONF_PLACEMENT,
@@ -43,11 +34,12 @@ from .const import (
     PLACEMENT_NONE,
     PLACEMENT_VIRTUAL,
     PLACEMENTS,
-    SUBENTRY_MACHINE,
 )
+from .data import unique_id
 from .runtime import async_note_rename, async_validate_conditions, async_validate_triggers
 
 CONF_NAME = "name"
+CONF_MACHINE = "machine"
 CONF_STATE = "state"
 CONF_NEW_NAME = "new_name"
 CONF_ACTION = "action"
@@ -105,13 +97,57 @@ def _device_name(device: dr.AnyDeviceEntry) -> str:
     return device.name_by_user or device.name or device.id
 
 
-# Config flow: the person or thing --------------------------------------------
+class _NewMachine:
+    """The new-machine form, shared by the config flow (first machine) and Configure (another one)."""
+
+    def __init__(self) -> None:
+        self.name = ""
+        self.names: list[str] = []
+        self.person: str | None = None
+
+    def read(self, user_input: dict[str, Any], taken: Callable[[str], bool]) -> dict[str, str]:
+        """Take the form's input; the errors, if any."""
+        errors: dict[str, str] = {}
+        self.name = user_input[CONF_NAME].strip()
+        self.person = user_input.get(CONF_PERSON) or None
+        try:
+            self.names = model.clean_state_names(user_input.get(CONF_STATES) or [])
+        except model.InvalidStates as err:
+            errors[CONF_STATES] = err.key
+        if not self.name:
+            errors[CONF_NAME] = "name_required"
+        elif taken(self.name):
+            errors[CONF_NAME] = "duplicate_machine"
+        return errors
+
+    def schema(self) -> vol.Schema:
+        return vol.Schema(
+            {
+                vol.Required(CONF_NAME, default=self.name or vol.UNDEFINED): TEXT,
+                vol.Required(CONF_STATES, default=self.names or vol.UNDEFINED): STATE_LIST,
+                vol.Optional(CONF_PERSON, description={"suggested_value": self.person}): PERSON,
+            }
+        )
+
+    def fallback_schema(self) -> vol.Schema:
+        return vol.Schema({vol.Required(CONF_FALLBACK, default=self.names[0]): _choice(self.names)})
+
+    def build(self, user_input: dict[str, Any]) -> dict[str, Any]:
+        return model.new_machine_data(self.name, self.names, user_input[CONF_FALLBACK], self.person)
+
+
+# Config flow: a person or thing and its first machine ------------------------------
 
 
 class AbstractStateMachineConfigFlow(ConfigFlow, domain=DOMAIN):
     """Add a person or thing that machines live on."""
 
     VERSION = 1
+
+    def __init__(self) -> None:
+        self._title = ""
+        self._options: dict[str, Any] = {}
+        self._new = _NewMachine()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return self.async_show_menu(step_id="user", menu_options=list(PLACEMENTS))
@@ -126,7 +162,8 @@ class AbstractStateMachineConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             if name := user_input[CONF_NAME].strip():
-                return self.async_create_entry(title=name, data={}, options={CONF_PLACEMENT: placement})
+                self._title, self._options = name, {CONF_PLACEMENT: placement}
+                return await self.async_step_machine()
             errors[CONF_NAME] = "name_required"
         return self.async_show_form(
             step_id=placement, data_schema=vol.Schema({vol.Required(CONF_NAME): TEXT}), errors=errors
@@ -139,133 +176,181 @@ class AbstractStateMachineConfigFlow(ConfigFlow, domain=DOMAIN):
             if device is None:
                 errors[CONF_DEVICE_ID] = "device_not_found"
             else:
-                return self.async_create_entry(
-                    title=_device_name(device),
-                    data={},
-                    options={CONF_PLACEMENT: PLACEMENT_EXISTING, CONF_DEVICE_ID: device.id},
-                )
+                self._title = _device_name(device)
+                self._options = {CONF_PLACEMENT: PLACEMENT_EXISTING, CONF_DEVICE_ID: device.id}
+                return await self.async_step_machine()
         return self.async_show_form(
             step_id=PLACEMENT_EXISTING,
             data_schema=vol.Schema({vol.Required(CONF_DEVICE_ID): DEVICE}),
             errors=errors,
         )
 
-    async def async_on_create_entry(self, result: ConfigFlowResult) -> ConfigFlowResult:
-        """Go straight on to the first machine."""
-        sub = await self.hass.config_entries.subentries.async_init(
-            (result["result"].entry_id, SUBENTRY_MACHINE),
-            context=SubentryFlowContext(source=SOURCE_USER),
+    async def async_step_machine(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors = self._new.read(user_input, lambda _: False) if user_input is not None else {}
+        if user_input is not None and not errors:
+            return await self.async_step_fallback()
+        return self.async_show_form(
+            step_id="machine", data_schema=self._new.schema(), errors=errors,
+            description_placeholders={"thing": self._title},
         )
-        result["next_flow"] = (FlowType.CONFIG_SUBENTRIES_FLOW, sub["flow_id"])
-        return result
+
+    async def async_step_fallback(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            options = {**self._options, CONF_MACHINES: [self._new.build(user_input)]}
+            return self.async_create_entry(title=self._title, data={}, options=options)
+        return self.async_show_form(step_id="fallback", data_schema=self._new.fallback_schema())
 
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        return PlacementOptionsFlow()
-
-    @classmethod
-    @callback
-    def async_get_supported_subentry_types(cls, config_entry: ConfigEntry) -> dict[str, type[ConfigSubentryFlow]]:
-        return {SUBENTRY_MACHINE: MachineSubentryFlow}
+        return MachinesOptionsFlow()
 
 
-# Options flow: placement ------------------------------------------------------
+# Options flow (Configure): machines, name and device --------------------------------
 
 
-class PlacementOptionsFlow(OptionsFlow):
-    """Move the entry's machines to another device, or off devices."""
+class MachinesOptionsFlow(OptionsFlow):
+    """Add, edit or remove a person or thing's machines; rename it or move it."""
+
+    def __init__(self) -> None:
+        self._new = _NewMachine()
+        self._machine_id = ""
+        self._rule_state = ""  # the state whose rules are being edited
+        self._rule_id: str | None = None  # the rule being edited; None = a new one
+        self._pending_rule: dict[str, Any] | None = None  # waiting for the loop warning
+
+    def _machines(self) -> list[dict[str, Any]]:
+        return model.machines_of(self.config_entry.options)
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
-        options = self.config_entry.options
+        machines = self._machines()
+        options = ["edit_machine"] if machines else []
+        options.append("add_machine")
+        if len(machines) > 1:
+            options.append("remove_machine")
+        options.append("placement")
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=options,
+            description_placeholders={
+                "thing": self.config_entry.title,
+                "machines": ", ".join(model.parse(m).name for m in machines) or "none yet",
+            },
+        )
+
+    async def async_step_add_machine(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return await self.async_step_machine()
+
+    async def async_step_machine(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors = self._new.read(user_input, self._name_taken) if user_input is not None else {}
+        if user_input is not None and not errors:
+            return await self.async_step_fallback()
+        return self.async_show_form(
+            step_id="machine", data_schema=self._new.schema(), errors=errors,
+            description_placeholders={"thing": self.config_entry.title},
+        )
+
+    async def async_step_fallback(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
+            return self._save_and_finish(self._new.build(user_input))
+        return self.async_show_form(step_id="fallback", data_schema=self._new.fallback_schema())
+
+    async def async_step_edit_machine(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Pick a machine to edit (straight through when there's only one)."""
+        machines = self._machines()
+        if user_input is not None or len(machines) == 1:
+            self._machine_id = user_input[CONF_MACHINE] if user_input is not None else machines[0]["id"]
+            return await self.async_step_machine_menu()
+        return self.async_show_form(
+            step_id="edit_machine", data_schema=vol.Schema({vol.Required(CONF_MACHINE): self._machine_choice()})
+        )
+
+    async def async_step_remove_machine(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(
+                data=model.without_machine(self.config_entry.options, user_input[CONF_MACHINE])
+            )
+        return self.async_show_form(
+            step_id="remove_machine", data_schema=vol.Schema({vol.Required(CONF_MACHINE): self._machine_choice()})
+        )
+
+    async def async_step_placement(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Rename the person or thing, or move its machines to another device, or off devices."""
+        entry = self.config_entry
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            name = user_input[CONF_NAME].strip()
             placement = user_input[CONF_PLACEMENT]
-            new: dict[str, Any] = {CONF_PLACEMENT: placement}
+            options = {k: v for k, v in entry.options.items() if k != CONF_DEVICE_ID}
+            options[CONF_PLACEMENT] = placement
+            if not name:
+                errors[CONF_NAME] = "name_required"
             if placement == PLACEMENT_EXISTING:
                 device_id = user_input.get(CONF_DEVICE_ID)
                 if not device_id:
                     errors[CONF_DEVICE_ID] = "device_required"
                 elif dr.async_get(self.hass).async_get(device_id) is None:
                     errors[CONF_DEVICE_ID] = "device_not_found"
-                new[CONF_DEVICE_ID] = device_id
+                options[CONF_DEVICE_ID] = device_id
             if not errors:
-                return self.async_create_entry(data=new)
+                if name != entry.title:
+                    self.hass.config_entries.async_update_entry(entry, title=name)
+                return self.async_create_entry(data=options)
         schema = vol.Schema(
             {
-                vol.Required(CONF_PLACEMENT, default=options.get(CONF_PLACEMENT, PLACEMENT_VIRTUAL)): _choice(
-                    list(PLACEMENTS), CONF_PLACEMENT
-                ),
-                vol.Optional(CONF_DEVICE_ID, description={"suggested_value": options.get(CONF_DEVICE_ID)}): DEVICE,
+                vol.Required(CONF_NAME, default=entry.title): TEXT,
+                vol.Required(
+                    CONF_PLACEMENT, default=entry.options.get(CONF_PLACEMENT, PLACEMENT_VIRTUAL)
+                ): _choice(list(PLACEMENTS), CONF_PLACEMENT),
+                vol.Optional(
+                    CONF_DEVICE_ID, description={"suggested_value": entry.options.get(CONF_DEVICE_ID)}
+                ): DEVICE,
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
+        return self.async_show_form(step_id="placement", data_schema=schema, errors=errors)
 
+    def _machine_choice(self) -> selector.SelectSelector:
+        options: list[selector.SelectOptionDict] = [
+            {"value": m["id"], "label": model.parse(m).name} for m in self._machines()
+        ]
+        return _choice(options)
 
-# Subentry flow: one machine ---------------------------------------------------
-
-
-class MachineSubentryFlow(ConfigSubentryFlow):
-    """Add or edit one machine."""
-
-    def __init__(self) -> None:
-        self._name = ""
-        self._names: list[str] = []
-        self._person: str | None = None
-        self._rule_state = ""  # the state whose rules are being edited
-        self._rule_id: str | None = None  # the rule being edited; None = a new one
-        self._pending_rule: dict[str, Any] | None = None  # waiting for the loop warning
-
-    # Add -----------------------------------------------------------------
-
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            self._name = user_input[CONF_NAME].strip()
-            self._person = user_input.get(CONF_PERSON) or None
-            try:
-                self._names = model.clean_state_names(user_input.get(CONF_STATES) or [])
-            except model.InvalidStates as err:
-                errors[CONF_STATES] = err.key
-            if not self._name:
-                errors[CONF_NAME] = "name_required"
-            if not errors:
-                return await self.async_step_fallback()
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_NAME, default=self._name or vol.UNDEFINED): TEXT,
-                vol.Required(CONF_STATES, default=self._names or vol.UNDEFINED): STATE_LIST,
-                vol.Optional(CONF_PERSON, description={"suggested_value": self._person}): PERSON,
-            }
-        )
-        return self.async_show_form(
-            step_id="user",
-            data_schema=schema,
-            errors=errors,
-            description_placeholders={"entry": self._get_entry().title},
+    def _name_taken(self, name: str, machine_id: str | None = None) -> bool:
+        """Another machine of this person or thing already has the name."""
+        return any(
+            model.parse(m).name.casefold() == name.casefold() for m in self._machines() if m["id"] != machine_id
         )
 
-    async def async_step_fallback(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        if user_input is not None:
-            return self.async_create_entry(
-                title=self._name,
-                data=model.new_machine_data(self._names, user_input[CONF_FALLBACK], self._person),
-            )
-        schema = vol.Schema({vol.Required(CONF_FALLBACK, default=self._names[0]): _choice(self._names)})
-        return self.async_show_form(step_id="fallback", data_schema=schema)
+    # Edit one machine -------------------------------------------------------------
 
-    # Reconfigure ---------------------------------------------------------
-
-    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+    async def async_step_machine_menu(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return self.async_show_menu(
-            step_id="reconfigure",
+            step_id="machine_menu",
             menu_options=["rules", "edit_states", "rename_state", "settings", "icons"],
-            description_placeholders={"machine": self._get_reconfigure_subentry().title},
+            description_placeholders={"machine": self._machine().name},
         )
+
+    def _raw_machine(self) -> dict[str, Any]:
+        machine = model.find_machine(self.config_entry.options, self._machine_id)
+        if machine is None:
+            raise HomeAssistantError("machine gone")  # removed by another flow meanwhile
+        return machine
+
+    def _machine(self) -> model.MachineDef:
+        return model.parse(self._raw_machine())
+
+    def _save(self, machine: dict[str, Any]) -> None:
+        """Store a machine change and stay in the flow. The update listener reloads the entry."""
+        entry = self.config_entry
+        self.hass.config_entries.async_update_entry(entry, options=model.with_machine(entry.options, machine))
+
+    def _save_and_finish(self, machine: dict[str, Any]) -> ConfigFlowResult:
+        """Store a machine change and close. The entry's update listener reloads it."""
+        return self.async_create_entry(data=model.with_machine(self.config_entry.options, machine))
 
     # Rules -----------------------------------------------------------------
 
-    async def async_step_rules(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+    async def async_step_rules(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Pick the state whose rules to edit."""
         machine = self._machine()
         if user_input is not None:
@@ -280,7 +365,7 @@ class MachineSubentryFlow(ConfigSubentryFlow):
             step_id="rules", data_schema=schema, description_placeholders={"fallback": machine.fallback}
         )
 
-    async def async_step_rules_list(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+    async def async_step_rules_list(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """One state's rules: add, edit or delete."""
         machine = self._machine()
         state = machine.state(self._rule_state)
@@ -289,7 +374,7 @@ class MachineSubentryFlow(ConfigSubentryFlow):
         if user_input is not None:
             action: str = user_input[CONF_ACTION]
             if action == "done":
-                return self.async_abort(reason="reconfigure_successful")
+                return self.async_create_entry(data=dict(self.config_entry.options))  # already saved
             if action == "other_state":
                 return await self.async_step_rules()
             self._rule_id = None
@@ -300,7 +385,7 @@ class MachineSubentryFlow(ConfigSubentryFlow):
             verb, _, rule_id = action.partition(":")
             rule = next((r for r in state.rules if r.id == rule_id), None)
             if rule is not None and verb == "delete":
-                self._save(model.remove_rule(self._get_reconfigure_subentry().data, rule_id))
+                self._save(model.remove_rule(self._raw_machine(), rule_id))
                 return await self.async_step_rules_list()
             if rule is not None and verb == "edit":
                 self._rule_id = rule_id
@@ -312,9 +397,9 @@ class MachineSubentryFlow(ConfigSubentryFlow):
             {"value": "add_condition", "label": "Add a condition rule: while something is true, be here"},
         ]
         for rule in state.rules:
-            options.append({"value": f"edit:{rule.id}", "label": f"Edit \u201c{rule.name}\u201d"})
+            options.append({"value": f"edit:{rule.id}", "label": f"Edit “{rule.name}”"})
         for rule in state.rules:
-            options.append({"value": f"delete:{rule.id}", "label": f"Delete \u201c{rule.name}\u201d"})
+            options.append({"value": f"delete:{rule.id}", "label": f"Delete “{rule.name}”"})
         options += [
             {"value": "other_state", "label": "Rules of another state"},
             {"value": "done", "label": "Done"},
@@ -326,7 +411,7 @@ class MachineSubentryFlow(ConfigSubentryFlow):
             description_placeholders={"state": state.name, "rules": _describe_rules(state)},
         )
 
-    async def async_step_trigger_rule(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+    async def async_step_trigger_rule(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """When a trigger fires (and the machine is in one of ``from``, and conditions pass), go to the state."""
         current = self._current_rule()
         errors: dict[str, str] = {}
@@ -368,7 +453,7 @@ class MachineSubentryFlow(ConfigSubentryFlow):
             step_id="trigger_rule", data_schema=schema, errors=errors, description_placeholders=placeholders
         )
 
-    async def async_step_condition_rule(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+    async def async_step_condition_rule(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """While all conditions are true, be in the state (first matching state from the top wins)."""
         current = self._current_rule()
         errors: dict[str, str] = {}
@@ -401,55 +486,45 @@ class MachineSubentryFlow(ConfigSubentryFlow):
             step_id="condition_rule", data_schema=schema, errors=errors, description_placeholders=placeholders
         )
 
-    async def async_step_loop_warning(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+    async def async_step_loop_warning(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """The new rule reads a machine that (through others) reads this one."""
         assert self._pending_rule is not None
         if user_input is not None:
             rule, self._pending_rule = self._pending_rule, None
-            self._save(model.upsert_rule(self._get_reconfigure_subentry().data, self._rule_state, rule))
+            self._save(model.upsert_rule(self._raw_machine(), self._rule_state, rule))
             return await self.async_step_rules_list()
-        loop = _find_loop(self.hass, self._get_reconfigure_subentry().subentry_id, self._with_pending())
+        loop = _find_loop(self.hass, self._machine_id, self._with_pending())
         return self.async_show_form(
             step_id="loop_warning",
             data_schema=vol.Schema({}),
             description_placeholders={
-                "loop": " \u2192 ".join(loop or []),
+                "loop": " → ".join(loop or []),
                 "max_flips": str(self._machine().max_flips),
             },
         )
 
-    async def _async_save_rule(self, rule: dict[str, Any]) -> SubentryFlowResult:
-        subentry = self._get_reconfigure_subentry()
-        data = model.upsert_rule(subentry.data, self._rule_state, rule)
-        if _find_loop(self.hass, subentry.subentry_id, data):
+    async def _async_save_rule(self, rule: dict[str, Any]) -> ConfigFlowResult:
+        machine = model.upsert_rule(self._raw_machine(), self._rule_state, rule)
+        if _find_loop(self.hass, self._machine_id, machine):
             self._pending_rule = rule
             return await self.async_step_loop_warning()
-        self._save(data)
+        self._save(machine)
         return await self.async_step_rules_list()
 
     def _with_pending(self) -> dict[str, Any]:
-        data = self._get_reconfigure_subentry().data
-        return model.upsert_rule(data, self._rule_state, self._pending_rule) if self._pending_rule else dict(data)
+        machine = self._raw_machine()
+        return model.upsert_rule(machine, self._rule_state, self._pending_rule) if self._pending_rule else machine
 
     def _current_rule(self) -> dict[str, Any] | None:
         if self._rule_id is None:
             return None
-        found = model.find_rule(self._get_reconfigure_subentry().data, self._rule_id)
+        found = model.find_rule(self._raw_machine(), self._rule_id)
         return found[1] if found else None
-
-    def _save(self, data: dict[str, Any]) -> None:
-        """Store a rule change and stay in the flow. The update listener reloads the entry."""
-        self.hass.config_entries.async_update_subentry(self._get_entry(), self._get_reconfigure_subentry(), data=data)
-
-    def _machine(self) -> model.MachineDef:
-        subentry = self._get_reconfigure_subentry()
-        return model.parse(subentry.title, subentry.data)
 
     # States and settings -----------------------------------------------------
 
-    async def async_step_edit_states(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        subentry = self._get_reconfigure_subentry()
-        current = model.parse(subentry.title, subentry.data).names
+    async def async_step_edit_states(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        raw = self._raw_machine()
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
@@ -457,44 +532,45 @@ class MachineSubentryFlow(ConfigSubentryFlow):
             except model.InvalidStates as err:
                 errors[CONF_STATES] = err.key
             else:
-                return self._save_and_finish(data=model.with_states(subentry.data, names))
-        schema = vol.Schema({vol.Required(CONF_STATES, default=current): STATE_LIST})
+                return self._save_and_finish(model.with_states(raw, names))
+        schema = vol.Schema({vol.Required(CONF_STATES, default=model.parse(raw).names): STATE_LIST})
         return self.async_show_form(step_id="edit_states", data_schema=schema, errors=errors)
 
-    async def async_step_rename_state(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        subentry = self._get_reconfigure_subentry()
-        names = model.parse(subentry.title, subentry.data).names
+    async def async_step_rename_state(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        raw = self._raw_machine()
         errors: dict[str, str] = {}
         if user_input is not None:
             old, new = user_input[CONF_STATE], user_input[CONF_NEW_NAME].strip()
             try:
-                data = model.rename_state(subentry.data, old, new)
+                renamed = model.rename_state(raw, old, new)
             except model.InvalidStates as err:
                 errors[CONF_NEW_NAME] = err.key
             else:
-                async_note_rename(self.hass, subentry.subentry_id, old, new)
-                return self._save_and_finish(data=data)
+                async_note_rename(self.hass, self._machine_id, old, new)
+                return self._save_and_finish(renamed)
         schema = vol.Schema(
-            {vol.Required(CONF_STATE): _choice(names), vol.Required(CONF_NEW_NAME): TEXT}
+            {vol.Required(CONF_STATE): _choice(model.parse(raw).names), vol.Required(CONF_NEW_NAME): TEXT}
         )
         return self.async_show_form(step_id="rename_state", data_schema=schema, errors=errors)
 
-    async def async_step_settings(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        subentry = self._get_reconfigure_subentry()
-        machine = model.parse(subentry.title, subentry.data)
+    async def async_step_settings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        raw = self._raw_machine()
+        machine = model.parse(raw)
         errors: dict[str, str] = {}
         if user_input is not None:
             name = user_input[CONF_NAME].strip()
             if not name:
                 errors[CONF_NAME] = "name_required"
+            elif self._name_taken(name, self._machine_id):
+                errors[CONF_NAME] = "duplicate_machine"
             else:
-                data = model.with_settings(
-                    subentry.data,
+                return self._save_and_finish(model.with_settings(
+                    raw,
+                    name,
                     user_input[CONF_FALLBACK],
                     user_input.get(CONF_PERSON),
                     user_input.get(CONF_MAX_FLIPS, machine.max_flips),
-                )
-                return self._save_and_finish(title=name, data=data)
+                ))
         schema = vol.Schema(
             {
                 vol.Required(CONF_NAME, default=machine.name): TEXT,
@@ -505,12 +581,12 @@ class MachineSubentryFlow(ConfigSubentryFlow):
         )
         return self.async_show_form(step_id="settings", data_schema=schema, errors=errors)
 
-    async def async_step_icons(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
-        subentry = self._get_reconfigure_subentry()
-        machine = model.parse(subentry.title, subentry.data)
+    async def async_step_icons(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        raw = self._raw_machine()
+        machine = model.parse(raw)
         if user_input is not None:
             icons = {state.name: user_input.get(state.name) for state in machine.states}
-            return self._save_and_finish(data=model.with_icons(subentry.data, icons))
+            return self._save_and_finish(model.with_icons(raw, icons))
         schema = vol.Schema(
             {
                 vol.Optional(state.name, description={"suggested_value": state.icon}): selector.IconSelector()
@@ -518,10 +594,6 @@ class MachineSubentryFlow(ConfigSubentryFlow):
             }
         )
         return self.async_show_form(step_id="icons", data_schema=schema)
-
-    def _save_and_finish(self, **changes: Any) -> SubentryFlowResult:
-        """Store the change and close. The entry's update listener reloads it."""
-        return self.async_update_and_abort(self._get_entry(), self._get_reconfigure_subentry(), **changes)
 
 
 # Helpers ------------------------------------------------------------------------
@@ -560,22 +632,20 @@ def _describe_rules(state: model.StateDef) -> str:
     return "\n".join(lines)
 
 
-def _find_loop(hass: HomeAssistant, subentry_id: str, data: dict[str, Any]) -> list[str] | None:
-    """Machine names in a loop through ``subentry_id`` (with ``data`` as its new data), or ``None``."""
+def _find_loop(hass: HomeAssistant, machine_id: str, machine: dict[str, Any]) -> list[str] | None:
+    """Machine names in a loop through ``machine_id`` (with ``machine`` as its new data), or ``None``."""
     ent_reg = er.async_get(hass)
-    owner: dict[str, str] = {}  # entity id → subentry id
-    machines: dict[str, tuple[str, Any]] = {}  # subentry id → (title, data)
+    owner: dict[str, str] = {}  # entity id → machine id
+    machines: dict[str, dict[str, Any]] = {}  # machine id → data
     for entry in hass.config_entries.async_entries(DOMAIN):
-        for sid, sub in entry.subentries.items():
-            if sub.subentry_type != SUBENTRY_MACHINE:
-                continue
-            machines[sid] = (sub.title, data if sid == subentry_id else sub.data)
-            for platform, key in (("select", "state"), ("event", "transition")):
-                if entity_id := ent_reg.async_get_entity_id(platform, DOMAIN, f"{sid}_{key}"):
-                    owner[entity_id] = sid
+        for raw in model.machines_of(entry.options):
+            mid = raw["id"]
+            machines[mid] = machine if mid == machine_id else raw
+            if entity_id := ent_reg.async_get_entity_id("select", DOMAIN, unique_id(mid)):
+                owner[entity_id] = mid
     depends_on = {
-        sid: {owner[e] for e in model.referenced_entities(raw.get("states") or []) if e in owner}
-        for sid, (_, raw) in machines.items()
+        mid: {owner[e] for e in model.referenced_entities(raw.get("states") or []) if e in owner}
+        for mid, raw in machines.items()
     }
-    loop = model.find_loop(depends_on, subentry_id)
-    return [machines[sid][0] for sid in loop] if loop else None
+    loop = model.find_loop(depends_on, machine_id)
+    return [model.parse(machines[mid]).name for mid in loop] if loop else None

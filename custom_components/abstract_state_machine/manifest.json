@@ -7,9 +7,9 @@
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/cubicecho/abstract_state_machine_ha_integration",
-  "integration_type": "helper",
+  "integration_type": "hub",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/cubicecho/abstract_state_machine_ha_integration/issues",
   "requirements": [],
-  "version": "0.2.0"
+  "version": "0.3.0"
 }

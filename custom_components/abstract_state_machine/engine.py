@@ -71,7 +71,7 @@ type Result = tuple[Status, Transition | None] | None
 def initial(machine: MachineDef, restored: Status | None, now: datetime) -> Status:
     """The state to start in: the restored one if it still exists, else the fallback.
 
-    Starting never counts as a transition: no events on startup. Condition
+    Starting never counts as a transition. Condition
     rules are applied right after, by the caller.
     """
     names = machine.names
