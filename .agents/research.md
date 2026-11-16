@@ -39,7 +39,7 @@ Community threads ask for this over and over: [house modes](https://community.ho
 | **Linking a helper to an existing device** | Template, derivative and similar helpers can attach their entity to a chosen device (`homeassistant.helpers.device.async_device_info_to_link_from_device_id`, **verify**). That puts the dishwasher machine on the dishwasher's smart-plug device. |
 | **`workday` binary sensor**, **`holiday` calendar** | Country holidays and which weekdays are workdays. Typical inputs for a day-type machine. |
 | **`schedule` helper** | A weekly block per person (work hours, sleep hours). Typical inputs for an hour-type machine. |
-| **`calendar` entities and triggers** | PTO, vacation, meetings, focus time. A calendar entity is `on` with the current event in `message`, but only for **one** event at a time. Matching "any current event whose title contains X" needs a template, or a condition type we provide (**verify** that integrations can register condition platforms on 2026.11). |
+| **`calendar` entities and triggers** | PTO, vacation, meetings, focus time. A calendar entity is `on` with the current event in `message`, but only for **one** event at a time. Matching "any current event whose title contains X" needs a template, or a condition type we provide. Verified: integrations can add condition platforms (`condition.py`, 2026.10+); `abstract_state_machine.calendar_event` does this. |
 | **`person`, `zone`, mobile app sensors** | Presence (home, work zone), phone charging / sleep-ish signals for "sleeping". |
 | **`RestoreEntity`** | Keeps transition machines in their state across restarts. |
 

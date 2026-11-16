@@ -2,7 +2,7 @@
 
 A Home Assistant integration (`integration_type: hub`, so it lives under Integrations, not Helpers) for building **state machines** in the UI. The user names each machine, adds their own states, and picks for each state the rules, HA triggers and conditions, that move the machine into it. Each machine is a `select` entity. Example machines, built by the user, not built in: per-person **day type** and **hour type**, **house mode**, a **dishwasher** cycle.
 
-**Status: phase 2 done, restructured (0.3.0).** One entry per person or thing, its machines in the entry's options (no subentries); trigger and condition rules, holds, flip limit, loop warning. No transition events (for now). Next: phase 3 (composition and calendars, README recipes). See [`.agents/plan.md`](.agents/plan.md).
+**Status: phase 3 done (0.4.0).** One entry per person or thing, its machines in the entry's options (no subentries); trigger and condition rules, holds, flip limit, loop warning; a `calendar_event` condition; README recipes. No transition events (for now). Next: phase 4 (extras). See [`.agents/plan.md`](.agents/plan.md).
 
 ## Commands
 
@@ -33,6 +33,7 @@ custom_components/abstract_state_machine/
   select.py        # the state (RestoreEntity, full status incl. holds as extra data); device_entry; service handlers
   config_flow.py   # config flow: placement + first machine; options flow (Configure): machines, rules, states, settings, name/device
   services.py      # set_state (reason, hold), clear_override (platform entity services)
+  condition.py     # condition platform: abstract_state_machine.calendar_event (+ conditions.yaml for the picker)
 tests/
   common.py        # machine(), add_thing(), machine_data(): entries with machines, no flows
 dev/               # docker compose preview HA + fake inputs
@@ -53,6 +54,7 @@ dev/               # docker compose preview HA + fake inputs
 - **`engine.py` and `model.py` stay pure** (no HA imports). Model edits keep keys they don't know.
 - **Every change records a `reason`** (`manual`, a caller's reason, a rule name; `restored` / `initial` on startup).
 - **No event entity or bus event (for now):** automations use a state trigger on the select. Removed in 0.3.0 to keep it simple.
+- **Our own conditions go through HA's condition platform** (`condition.py` → `async_get_conditions`, `conditions.yaml`, `conditions` in strings). They show in the automation editor's picker, so in rule forms too, but only once the integration is loaded (an entry exists). `calendar_event` caches today's and tomorrow's events (refresh every 15 min and at midnight), checks synchronously, `needs_polling` is True, and calls tracked actions when a refresh changes the events. Checkers hold timers: whoever builds one must `async_unload()` it (the runtime does).
 - **No presets.** Day type, house mode, etc. are recipes the user builds.
 
 ## Agent File Convention

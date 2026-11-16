@@ -285,3 +285,42 @@ async def test_flip_limit_stops_a_loop_between_machines(hass: HomeAssistant) -> 
     # Settled (the loop stopped), and one of them hit its limit.
     states = (hass.states.get("select.loop_a"), hass.states.get("select.loop_b"))
     assert any(s.attributes.get("flip_limited") for s in states)
+
+
+# Composition ----------------------------------------------------------------------
+
+
+async def test_house_mode_reads_everyones_hour_type(hass: HomeAssistant) -> None:
+    """The README's house mode: other entries' machines as inputs, and a trigger rule that holds."""
+    for person in ("Alice", "Bob"):
+        await add_thing(hass, person, [machine("Hour type", ["sleeping", "working", "free"], "free", machine_id=person)])
+
+    def sleeping(person: str) -> dict[str, Any]:
+        return {"condition": "state", "entity_id": f"select.{person}_hour_type", "state": "sleeping"}
+
+    house = _with_rules(machine("Mode", ["sleeping", "wake_up", "home"], "home"), {
+        "sleeping": [_condition_rule("s", "Everyone asleep", [sleeping("alice"), sleeping("bob")])],
+        "wake_up": [_trigger_rule("w", "Alarm", [{"trigger": "state", "entity_id": "input_boolean.alarm", "to": "on"}],
+                                  from_states=["sleeping"])],
+    })
+    await add_thing(hass, "House", [house])
+    mode = "select.house_mode"
+    assert hass.states.get(mode).state == "home"
+
+    for person in ("alice", "bob"):
+        await hass.services.async_call(
+            "select", "select_option", {"entity_id": f"select.{person}_hour_type", "option": "sleeping"}, blocking=True
+        )
+    await hass.async_block_till_done()
+    assert hass.states.get(mode).state == "sleeping"
+
+    await _set(hass, "input_boolean.alarm", "on")
+    state = hass.states.get(mode)
+    assert (state.state, state.attributes["override"], state.attributes["rules_state"]) == ("wake_up", True, "sleeping")
+
+    await hass.services.async_call(
+        "select", "select_option", {"entity_id": "select.alice_hour_type", "option": "free"}, blocking=True
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get(mode)
+    assert (state.state, state.attributes["override"]) == ("home", False)

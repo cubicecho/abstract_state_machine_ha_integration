@@ -1,4 +1,9 @@
 {
+  "conditions": {
+    "calendar_event": {
+      "condition": "mdi:calendar-search"
+    }
+  },
   "services": {
     "set_state": {
       "service": "mdi:state-machine"

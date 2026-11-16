@@ -213,12 +213,50 @@
       "unknown_state": "That state no longer exists."
     }
   },
+  "conditions": {
+    "calendar_event": {
+      "name": "Calendar has a matching event",
+      "description": "Tests if one of the calendars has an event now, today or tomorrow, optionally only ones whose title contains some text. Unlike the calendar's own state, this sees every event, not just the next one.",
+      "fields": {
+        "when": {
+          "name": "When",
+          "description": "Now: an event is going on right now. Today or tomorrow: any event on that day, all-day or not."
+        },
+        "title_contains": {
+          "name": "Title contains",
+          "description": "Only events whose title contains this, e.g. PTO. Case doesn't matter. Empty: any event."
+        },
+        "search_description": {
+          "name": "Also search the description",
+          "description": "Match the text in the event's description too, not just its title."
+        },
+        "event_kind": {
+          "name": "Kind of event",
+          "description": "All events, only all-day ones, or only ones with a start and end time."
+        }
+      }
+    }
+  },
   "selector": {
     "placement": {
       "options": {
         "virtual_device": "A new virtual device",
         "existing_device": "A device I already have",
         "none": "No device"
+      }
+    },
+    "calendar_when": {
+      "options": {
+        "now": "Now",
+        "today": "Today",
+        "tomorrow": "Tomorrow"
+      }
+    },
+    "calendar_event_kind": {
+      "options": {
+        "any": "Any",
+        "all_day": "All-day only",
+        "timed": "Timed only"
       }
     }
   },

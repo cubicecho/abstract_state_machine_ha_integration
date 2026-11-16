@@ -1,6 +1,9 @@
 {
   "domain": "abstract_state_machine",
   "name": "Abstract State Machine",
+  "after_dependencies": [
+    "calendar"
+  ],
   "codeowners": [
     "@vantreeseba"
   ],
@@ -11,5 +14,5 @@
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/cubicecho/abstract_state_machine_ha_integration/issues",
   "requirements": [],
-  "version": "0.3.0"
+  "version": "0.4.0"
 }

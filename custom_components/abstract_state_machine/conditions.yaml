@@ -1,0 +1,34 @@
+calendar_event:
+  target:
+    entity:
+      - domain: calendar
+  fields:
+    when:
+      required: true
+      default: now
+      selector:
+        select:
+          translation_key: calendar_when
+          options:
+            - now
+            - today
+            - tomorrow
+    title_contains:
+      required: false
+      selector:
+        text:
+    search_description:
+      required: false
+      default: false
+      selector:
+        boolean:
+    event_kind:
+      required: true
+      default: any
+      selector:
+        select:
+          translation_key: calendar_event_kind
+          options:
+            - any
+            - all_day
+            - timed

@@ -179,7 +179,9 @@ Planned files under `custom_components/abstract_state_machine/`:
    - Labels in the rule list (Add / Edit / Delete …) are English only: they're built per rule, so they can't come from translations.
    - Condition rules re-check via HA 2026.10's condition checkers (`async_track_changes` / `needs_polling`), not by extracting entity ids.
    - **Restructured in 0.3.0** after looking at the integration page: `integration_type: hub` (not a helper); entry = person or thing with its machines in its options, no subentries (so no "Devices that don't belong to a sub-entry"); machines managed from Configure. No event entity or bus event. 95 tests.
-3. **Composition and calendars.** Calendar matching ("any current event whose title contains PTO"): a template first, our own condition type if templates are too painful. README recipes for the examples.
+3. **Composition and calendars** ✅ (2026-11-15, 0.4.0). Our own condition type `abstract_state_machine.calendar_event` (calendars as target; when now / today / tomorrow; title contains, optionally the description too; any / all-day / timed), via HA's condition platform, so it's in the condition picker for rules and automations. README recipes: day type, hour type, house mode, dishwasher. A test of house mode reading other entries' machines with a holding trigger rule. 104 tests. Differences from the plan:
+   - No template step: templates can't list calendar events, so the condition type came first.
+   - Composition needed no code: machines are entities, so rules read them like anything else.
 4. **Extras.** Duplicate machine, `explain` service, device triggers, per-state binary sensors, maybe a panel or card that draws the machine (states as nodes, rules as edges, current state lit).
 
 ## Open questions
