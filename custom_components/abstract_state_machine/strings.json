@@ -36,7 +36,7 @@
         "description": "Name it and list its states. Type a state and press Enter to add the next. The order matters for condition rules: the first state from the top whose rules match wins. Add rules afterwards: the entry's Configure → Edit a state machine → Rules.",
         "data": {
           "name": "Name",
-          "states": "States",
+          "states": "State",
           "person": "Person (optional)"
         },
         "data_description": {
@@ -63,8 +63,8 @@
   "options": {
     "step": {
       "init": {
-        "title": "Edit {thing}",
-        "description": "State machines: {machines}.",
+        "title": "Configure",
+        "description": "**{thing}**. State machines: {machines}.",
         "menu_options": {
           "edit_machine": "Edit a state machine: rules, states, settings",
           "add_machine": "Add a state machine",
@@ -78,7 +78,7 @@
         "description": "Name it and list its states. Type a state and press Enter to add the next. The order matters for condition rules: the first state from the top whose rules match wins. Add rules afterwards: Configure → Edit a state machine → Rules.",
         "data": {
           "name": "Name",
-          "states": "States",
+          "states": "State",
           "person": "Person (optional)"
         },
         "data_description": {
@@ -115,20 +115,21 @@
         }
       },
       "machine_menu": {
-        "title": "Edit {machine}",
+        "title": "Edit a state machine",
         "menu_options": {
           "rules": "Rules: what moves the machine into each state",
           "edit_states": "Add, remove or reorder states",
           "rename_state": "Rename a state",
           "settings": "Name, fallback, person, flip limit, state sensors",
           "icons": "State icons"
-        }
+        },
+        "description": "**{machine}**: what do you want to change?"
       },
       "edit_states": {
         "title": "States",
         "description": "The order is the priority order. Removing the current state sends the machine to its fallback. Automations that use a removed state stop matching.",
         "data": {
-          "states": "States"
+          "states": "State"
         }
       },
       "rename_state": {

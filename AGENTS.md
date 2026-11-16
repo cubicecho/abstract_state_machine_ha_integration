@@ -1,6 +1,6 @@
 # Project: Abstract State Machine — Home Assistant Integration
 
-A Home Assistant integration (`integration_type: hub`, so it lives under Integrations, not Helpers) for building **state machines** in the UI. The user names each machine, adds their own states, and picks for each state the rules, HA triggers and conditions, that move the machine into it. Each machine is a `select` entity. Example machines, built by the user, not built in: per-person **day type** and **hour type**, **house mode**, a **dishwasher** cycle.
+A Home Assistant integration (`integration_type: device`, so it lives under Integrations, not Helpers, and its page says "Add device") for building **state machines** in the UI. The user names each machine, adds their own states, and picks for each state the rules, HA triggers and conditions, that move the machine into it. Each machine is a `select` entity. Example machines, built by the user, not built in: per-person **day type** and **hour type**, **house mode**, a **dishwasher** cycle.
 
 **Status: phase 4 done (0.5.0).** One entry per person or thing, its machines in the entry's options (no subentries); trigger and condition rules, holds, flip limit, loop warning; a `calendar_event` condition; README recipes; copy machine, `explain`, optional state binary sensors. No transition events (for now). Next: maybe a card that draws the machine. See [`.agents/plan.md`](.agents/plan.md).
 
@@ -56,6 +56,8 @@ dev/               # docker compose preview HA + fake inputs
 - **Every change records a `reason`** (`manual`, a caller's reason, a rule name; `restored` / `initial` on startup).
 - **No event entity or bus event (for now):** automations use a state trigger on the select. Removed in 0.3.0 to keep it simple.
 - **Our own conditions go through HA's condition platform** (`condition.py` → `async_get_conditions`, `conditions.yaml`, `conditions` in strings). They show in the automation editor's picker, so in rule forms too, but only once the integration is loaded (an entry exists). `calendar_event` caches today's and tomorrow's events (refresh every 15 min and at midnight), checks synchronously, `needs_polling` is True, and calls tracked actions when a refresh changes the events. Checkers hold timers: whoever builds one must `async_unload()` it (the runtime does).
+- **Options-flow menu titles can't use placeholders** (the frontend shows "Translation … MISSING_VALUE"); form titles and menu descriptions can. Menu steps get a fixed title and put names in the description.
+- **Brand icon ships in `brand/`** (`icon.png`, `icon@2x.png`); HA 2026.x serves custom integrations' own brand images.
 - **Device triggers come from HA's select integration** (`current_option_changed` with from/to) for machines on a device; we don't add our own.
 - **No presets.** Day type, house mode, etc. are recipes the user builds.
 

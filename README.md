@@ -18,7 +18,7 @@ Settings → Devices & services → **Add integration** → Abstract State Machi
 
 Then add its first machine: a name, its states (type one, press Enter, type the next), an optional person, and the **fallback state** (where it starts, and where it goes when no condition rule matches).
 
-On the integration page, each person or thing is its own entry ("Alice", "Dishwasher"), with its device and its machines' entities. **Add entry** adds another. An entry's **Configure** has:
+On the integration page, each person or thing is its own entry ("Alice", "Dishwasher"), with its device and its machines' entities. **Add device** adds another. An entry's **Configure** has:
 
 - **Edit a state machine**: rules, states, renames, fallback, person, flip limit, state sensors, icons.
 - **Add a state machine** to the same person or thing.

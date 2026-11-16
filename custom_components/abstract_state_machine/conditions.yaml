@@ -18,7 +18,7 @@ calendar_event:
       selector:
         text:
     search_description:
-      required: false
+      required: true
       default: false
       selector:
         boolean:
@@ -28,6 +28,7 @@ calendar_event:
       selector:
         select:
           translation_key: calendar_event_kind
+          mode: dropdown
           options:
             - any
             - all_day
