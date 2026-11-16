@@ -22,4 +22,26 @@ def unique_id(machine_id: str) -> str:
     return f"{machine_id}_state"
 
 
+def state_sensor_unique_id(machine_id: str, state: str) -> str:
+    """The unique id of a machine's binary sensor for one state."""
+    return f"{machine_id}_is_{state}"
+
+
+def wanted_unique_ids(thing: Thing) -> set[str]:
+    """Every entity this entry should have."""
+    wanted: set[str] = set()
+    for runtime in thing.machines:
+        wanted.add(unique_id(runtime.machine_id))
+        if runtime.machine.state_sensors:
+            wanted.update(state_sensor_unique_id(runtime.machine_id, name) for name in runtime.machine.names)
+    return wanted
+
+
+def machine_label(name: str, device: dr.AnyDeviceEntry | None) -> str | None:
+    """A machine's entity name, or ``None`` when it equals the device's (no "Dishwasher Dishwasher")."""
+    if device is not None and (device.name_by_user or device.name or "").casefold() == name.casefold():
+        return None
+    return name
+
+
 type AsmConfigEntry = ConfigEntry[Thing]

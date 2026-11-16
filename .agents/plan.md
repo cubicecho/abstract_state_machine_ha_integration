@@ -182,7 +182,9 @@ Planned files under `custom_components/abstract_state_machine/`:
 3. **Composition and calendars** ✅ (2026-11-15, 0.4.0). Our own condition type `abstract_state_machine.calendar_event` (calendars as target; when now / today / tomorrow; title contains, optionally the description too; any / all-day / timed), via HA's condition platform, so it's in the condition picker for rules and automations. README recipes: day type, hour type, house mode, dishwasher. A test of house mode reading other entries' machines with a holding trigger rule. 104 tests. Differences from the plan:
    - No template step: templates can't list calendar events, so the condition type came first.
    - Composition needed no code: machines are entities, so rules read them like anything else.
-4. **Extras.** Duplicate machine, `explain` service, device triggers, per-state binary sensors, maybe a panel or card that draws the machine (states as nodes, rules as edges, current state lit).
+4. **Extras** ✅ (2026-11-15, 0.5.0). **Copy a state machine** (Configure; from any entry, new machine and rule ids), **`explain`** (response-only action: state, reason, hold, rules' answer, per rule `matches` / `from_ok` / `conditions_pass` / `error`), **a binary sensor per state** (opt-in per machine; renames keep it). 112 tests. Differences from the plan:
+   - No device triggers of our own: HA's select integration already offers `current_option_changed` (from/to) for any select on a device. A test checks it lists ours.
+   - No card yet. It needs a frontend build (like map-fusion's); `explain` already returns what it would draw. Next, if wanted.
 
 ## Open questions
 

@@ -10,6 +10,9 @@
     },
     "clear_override": {
       "service": "mdi:restore"
+    },
+    "explain": {
+      "service": "mdi:help-circle-outline"
     }
   }
 }

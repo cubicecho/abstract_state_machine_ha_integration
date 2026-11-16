@@ -25,3 +25,9 @@ clear_override:
     entity:
       integration: abstract_state_machine
       domain: select
+
+explain:
+  target:
+    entity:
+      integration: abstract_state_machine
+      domain: select

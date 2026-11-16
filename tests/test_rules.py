@@ -324,3 +324,30 @@ async def test_house_mode_reads_everyones_hour_type(hass: HomeAssistant) -> None
     await hass.async_block_till_done()
     state = hass.states.get(mode)
     assert (state.state, state.attributes["override"]) == ("home", False)
+
+
+
+# Explain ----------------------------------------------------------------------------
+
+
+async def test_explain(hass: HomeAssistant) -> None:
+    hass.states.async_set("binary_sensor.workday", "on")
+    sub = _with_rules(_day_type(), {"holiday": [
+        _trigger_rule("snow", "Snow day", [{"trigger": "state", "entity_id": "input_boolean.snow", "to": "on"}],
+                      from_states=["workday"], conditions=[{"condition": "state", "entity_id": "input_boolean.school", "state": "off"}]),
+        _trigger_rule("bad", "Broken", [{"trigger": "no_such_trigger"}]),
+    ]})
+    await add_thing(hass, "Alice time", [sub])
+    response = await hass.services.async_call(DOMAIN, "explain", {"entity_id": DAY}, blocking=True, return_response=True)
+    result = response[DAY]
+    assert (result["state"], result["reason"], result["rules_state"], result["override"]) == (
+        "workday", "Workday sensor", "workday", False
+    )
+    rules = {r["name"]: r for r in result["rules"]}
+    assert rules["PTO"] == {"state": "vacation", "name": "PTO", "kind": "condition", "matches": False}
+    assert rules["Workday sensor"]["matches"] is True
+    assert rules["Snow day"] == {
+        "state": "holiday", "name": "Snow day", "kind": "trigger", "from": ["workday"], "from_ok": True,
+        "conditions_pass": False,
+    }
+    assert "error" in rules["Broken"]

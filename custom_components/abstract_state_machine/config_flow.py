@@ -35,7 +35,7 @@ from .const import (
     PLACEMENT_VIRTUAL,
     PLACEMENTS,
 )
-from .data import unique_id
+from .data import state_sensor_unique_id, unique_id
 from .runtime import async_note_rename, async_validate_conditions, async_validate_triggers
 
 CONF_NAME = "name"
@@ -46,6 +46,8 @@ CONF_ACTION = "action"
 CONF_FROM = "from"
 CONF_TRIGGERS = "triggers"
 CONF_CONDITIONS = "conditions"
+CONF_SOURCE = "source"
+CONF_STATE_SENSORS = "state_sensors"
 
 TEXT = selector.TextSelector()
 STATE_LIST = selector.TextSelector(selector.TextSelectorConfig(multiple=True))
@@ -225,7 +227,7 @@ class MachinesOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         machines = self._machines()
         options = ["edit_machine"] if machines else []
-        options.append("add_machine")
+        options += ["add_machine", "copy_machine"]
         if len(machines) > 1:
             options.append("remove_machine")
         options.append("placement")
@@ -254,6 +256,30 @@ class MachinesOptionsFlow(OptionsFlow):
         if user_input is not None:
             return self._save_and_finish(self._new.build(user_input))
         return self.async_show_form(step_id="fallback", data_schema=self._new.fallback_schema())
+
+    async def async_step_copy_machine(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Copy any person or thing's machine into this one (Bob's day type from Alice's)."""
+        sources = _all_machines(self.hass)
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            source = sources.get(user_input[CONF_SOURCE])
+            name = (user_input.get(CONF_NAME) or "").strip() or (model.parse(source[1]).name if source else "")
+            if source is None:
+                errors[CONF_SOURCE] = "unknown_machine"
+            elif self._name_taken(name):
+                errors[CONF_NAME] = "duplicate_machine"
+            else:
+                return self._save_and_finish(model.copy_machine(source[1], name))
+        options: list[selector.SelectOptionDict] = [
+            {"value": key, "label": f"{title}: {model.parse(raw).name}"} for key, (title, raw) in sources.items()
+        ]
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_SOURCE): _choice(options),
+                vol.Optional(CONF_NAME): TEXT,
+            }
+        )
+        return self.async_show_form(step_id="copy_machine", data_schema=schema, errors=errors)
 
     async def async_step_edit_machine(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Pick a machine to edit (straight through when there's only one)."""
@@ -547,6 +573,7 @@ class MachinesOptionsFlow(OptionsFlow):
                 errors[CONF_NEW_NAME] = err.key
             else:
                 async_note_rename(self.hass, self._machine_id, old, new)
+                self._move_state_sensor(old, new)
                 return self._save_and_finish(renamed)
         schema = vol.Schema(
             {vol.Required(CONF_STATE): _choice(model.parse(raw).names), vol.Required(CONF_NEW_NAME): TEXT}
@@ -570,6 +597,7 @@ class MachinesOptionsFlow(OptionsFlow):
                     user_input[CONF_FALLBACK],
                     user_input.get(CONF_PERSON),
                     user_input.get(CONF_MAX_FLIPS, machine.max_flips),
+                    user_input.get(CONF_STATE_SENSORS, machine.state_sensors),
                 ))
         schema = vol.Schema(
             {
@@ -577,9 +605,17 @@ class MachinesOptionsFlow(OptionsFlow):
                 vol.Required(CONF_FALLBACK, default=machine.fallback): _choice(machine.names),
                 vol.Optional(CONF_PERSON, description={"suggested_value": machine.person}): PERSON,
                 vol.Required(CONF_MAX_FLIPS, default=machine.max_flips): MAX_FLIPS,
+                vol.Required(CONF_STATE_SENSORS, default=machine.state_sensors): selector.BooleanSelector(),
             }
         )
         return self.async_show_form(step_id="settings", data_schema=schema, errors=errors)
+
+    def _move_state_sensor(self, old: str, new: str) -> None:
+        """A renamed state keeps its binary sensor (and its entity id and history)."""
+        ent_reg = er.async_get(self.hass)
+        old_id = state_sensor_unique_id(self._machine_id, old)
+        if entity_id := ent_reg.async_get_entity_id("binary_sensor", DOMAIN, old_id):
+            ent_reg.async_update_entity(entity_id, new_unique_id=state_sensor_unique_id(self._machine_id, new))
 
     async def async_step_icons(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         raw = self._raw_machine()
@@ -630,6 +666,15 @@ def _describe_rules(state: model.StateDef) -> str:
         else:
             lines.append(f"- **{rule.name}**: condition rule ({_count(len(rule.conditions), 'condition')})")
     return "\n".join(lines)
+
+
+def _all_machines(hass: HomeAssistant) -> dict[str, tuple[str, dict[str, Any]]]:
+    """Every machine of every person or thing: ``"entry_id/machine_id"`` → (entry title, machine data)."""
+    return {
+        f"{entry.entry_id}/{raw['id']}": (entry.title, raw)
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        for raw in model.machines_of(entry.options)
+    }
 
 
 def _find_loop(hass: HomeAssistant, machine_id: str, machine: dict[str, Any]) -> list[str] | None:

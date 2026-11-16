@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.core import Context, HomeAssistant, State, callback
+from homeassistant.core import Context, HomeAssistant, ServiceResponse, State, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
@@ -25,7 +25,7 @@ from .const import (
     ATTR_REASON,
     ATTR_RULES_STATE,
 )
-from .data import AsmConfigEntry, unique_id
+from .data import AsmConfigEntry, machine_label, unique_id
 from .runtime import MachineRuntime
 
 
@@ -95,12 +95,7 @@ class MachineSelect(SelectEntity, RestoreEntity):
 
     @property
     def name(self) -> str | None:  # type: ignore[override]
-        """The machine's name, or ``None`` when it equals the device's (no "Dishwasher Dishwasher")."""
-        name = self.runtime.machine.name
-        device = self.device_entry
-        if device is not None and (device.name_by_user or device.name or "").casefold() == name.casefold():
-            return None
-        return name
+        return machine_label(self.runtime.machine.name, self.device_entry)
 
     @property
     def current_option(self) -> str | None:
@@ -175,6 +170,10 @@ class MachineSelect(SelectEntity, RestoreEntity):
     async def async_clear_override(self) -> None:
         """``abstract_state_machine.clear_override``."""
         self.runtime.async_clear_override(context=self._context)
+
+    async def async_explain(self) -> ServiceResponse:
+        """``abstract_state_machine.explain``: what each rule says right now."""
+        return self.runtime.explain()
 
 
 def _from_state(last: State | None) -> engine.Status | None:

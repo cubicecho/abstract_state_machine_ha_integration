@@ -33,6 +33,7 @@ A machine looks like::
         "fallback": "cleared",
         "person": "person.alice",   # optional
         "max_flips": 10,            # rule-driven changes allowed per minute
+        "state_sensors": false,     # a binary sensor per state
     }
 
 Triggers and conditions are stored exactly as the automation editor sends
@@ -42,6 +43,7 @@ Edits here keep keys they don't know about.
 """
 from __future__ import annotations
 
+import copy
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -104,6 +106,7 @@ class MachineDef:
     person: str | None = None
     max_flips: int = DEFAULT_MAX_FLIPS
     id: str = ""
+    state_sensors: bool = False
 
     @property
     def names(self) -> list[str]:
@@ -206,6 +209,7 @@ def parse(data: Mapping[str, Any]) -> MachineDef:
         fallback=fallback,
         person=data.get("person") or None,
         max_flips=_max_flips(data.get("max_flips")),
+        state_sensors=bool(data.get("state_sensors")),
     )
 
 
@@ -284,11 +288,32 @@ def with_icons(data: Mapping[str, Any], icons: Mapping[str, str | None]) -> dict
 
 
 def with_settings(
-    data: Mapping[str, Any], name: str, fallback: str, person: str | None, max_flips: Any
+    data: Mapping[str, Any],
+    name: str,
+    fallback: str,
+    person: str | None,
+    max_flips: Any,
+    state_sensors: bool = False,
 ) -> dict[str, Any]:
     return _with_fallback({
-        **data, "name": name, "fallback": fallback, "person": person or None, "max_flips": _max_flips(max_flips),
+        **data,
+        "name": name,
+        "fallback": fallback,
+        "person": person or None,
+        "max_flips": _max_flips(max_flips),
+        "state_sensors": bool(state_sensors),
     })
+
+
+def copy_machine(data: Mapping[str, Any], name: str) -> dict[str, Any]:
+    """A copy of a machine under a new name: new machine id, new rule ids, everything else the same."""
+    new = copy.deepcopy(dict(data))
+    new["id"] = uuid.uuid4().hex
+    new["name"] = name
+    for state in new.get("states") or []:
+        for rule in state.get("rules") or []:
+            rule["id"] = uuid.uuid4().hex
+    return new
 
 
 def upsert_rule(data: Mapping[str, Any], state_name: str, rule: Mapping[str, Any]) -> dict[str, Any]:

@@ -163,3 +163,22 @@ def test_find_loop() -> None:
     assert model.find_loop({"a": {"b"}, "b": {"c"}, "c": {"a"}}, "a") == ["a", "b", "c", "a"]
     assert model.find_loop({"a": {"a", "b"}, "b": set()}, "a") is None  # self-reference is fine
     assert model.find_loop({"a": {"b"}, "b": {"c"}, "c": {"b"}}, "a") is None  # a loop, but not through a
+
+
+def test_copy_machine_gets_new_ids() -> None:
+    data = model.new_machine_data("A", ["x", "y"], "x", "person.alice", machine_id="a")
+    data = model.upsert_rule(data, "y", _trig("r", ["x"]))
+    copy = model.copy_machine(data, "B")
+    assert (copy["name"], copy["person"], copy["fallback"]) == ("B", "person.alice", "x")
+    assert copy["id"] != "a"
+    assert copy["states"][1]["rules"][0]["id"] != "r"
+    assert copy["states"][1]["rules"][0]["from"] == ["x"]
+    assert data["states"][1]["rules"][0]["id"] == "r"  # the original is untouched
+
+
+def test_state_sensors_setting() -> None:
+    data = model.new_machine_data("M", ["a", "b"], "a", None)
+    assert not model.parse(data).state_sensors
+    data = model.with_settings(data, "M", "a", None, 10, True)
+    assert data["state_sensors"] is True
+    assert model.parse(data).state_sensors

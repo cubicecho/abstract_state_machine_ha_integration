@@ -1,13 +1,13 @@
-"""Services: ``set_state``, ``clear_override``."""
+"""Services: ``set_state``, ``clear_override``, ``explain``."""
 from __future__ import annotations
 
 import probatio as vol  # HA 2026.10+ validates with probatio
 from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, SupportsResponse, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import service
 
-from .const import DOMAIN, SERVICE_CLEAR_OVERRIDE, SERVICE_SET_STATE
+from .const import DOMAIN, SERVICE_CLEAR_OVERRIDE, SERVICE_EXPLAIN, SERVICE_SET_STATE
 
 
 @callback
@@ -31,4 +31,13 @@ def async_register(hass: HomeAssistant) -> None:
         entity_domain=SELECT_DOMAIN,
         schema={},
         func="async_clear_override",
+    )
+    service.async_register_platform_entity_service(
+        hass,
+        DOMAIN,
+        SERVICE_EXPLAIN,
+        entity_domain=SELECT_DOMAIN,
+        schema={},
+        func="async_explain",
+        supports_response=SupportsResponse.ONLY,
     )

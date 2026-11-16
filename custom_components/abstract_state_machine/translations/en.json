@@ -68,6 +68,7 @@
         "menu_options": {
           "edit_machine": "Edit a state machine: rules, states, settings",
           "add_machine": "Add a state machine",
+          "copy_machine": "Copy a state machine (from here or another person or thing)",
           "remove_machine": "Remove a state machine",
           "placement": "Rename, or change the device"
         }
@@ -119,7 +120,7 @@
           "rules": "Rules: what moves the machine into each state",
           "edit_states": "Add, remove or reorder states",
           "rename_state": "Rename a state",
-          "settings": "Name, fallback, person and flip limit",
+          "settings": "Name, fallback, person, flip limit, state sensors",
           "icons": "State icons"
         }
       },
@@ -139,15 +140,17 @@
         }
       },
       "settings": {
-        "title": "Name, fallback, person and flip limit",
+        "title": "Name, fallback, person and more",
         "data": {
           "name": "Name",
           "fallback": "Fallback state",
           "person": "Person (optional)",
-          "max_flips": "Flip limit (rule changes per minute)"
+          "max_flips": "Flip limit (rule changes per minute)",
+          "state_sensors": "A binary sensor per state"
         },
         "data_description": {
-          "max_flips": "After this many rule-driven changes within a minute, the machine ignores its rules until the minute is up. Stops machines that read each other from flipping forever."
+          "max_flips": "After this many rule-driven changes within a minute, the machine ignores its rules until the minute is up. Stops machines that read each other from flipping forever.",
+          "state_sensors": "Adds one on/off entity per state, e.g. \"Hour type sleeping\", for dashboards, HomeKit or anything that wants a simple on/off."
         }
       },
       "icons": {
@@ -194,7 +197,15 @@
       },
       "loop_warning": {
         "title": "These machines read each other",
-        "description": "With this rule, the machines form a loop: {loop}. They can keep changing each other. Each machine stops following its rules for a minute after {max_flips} rule changes in a minute (its flip limit, under Name, fallback, person and flip limit).\n\nSave the rule anyway?"
+        "description": "With this rule, the machines form a loop: {loop}. They can keep changing each other. Each machine stops following its rules for a minute after {max_flips} rule changes in a minute (its flip limit, under Name, fallback, person and more).\n\nSave the rule anyway?"
+      },
+      "copy_machine": {
+        "title": "Copy a state machine",
+        "description": "Copies its states, rules, icons and settings. Rules that read someone else's entities (Alice's calendar, say) still do: edit them afterwards.",
+        "data": {
+          "source": "Copy",
+          "name": "New name"
+        }
       }
     },
     "error": {
@@ -210,7 +221,8 @@
       "duplicate_machine": "Another state machine here already has that name.",
       "device_required": "Pick a device.",
       "device_not_found": "That device no longer exists.",
-      "unknown_state": "That state no longer exists."
+      "unknown_state": "That state no longer exists.",
+      "unknown_machine": "That state machine no longer exists."
     }
   },
   "conditions": {
@@ -290,12 +302,16 @@
     "clear_override": {
       "name": "Clear override",
       "description": "Stops holding a state set by hand or by a trigger rule; the machine follows its condition rules again."
+    },
+    "explain": {
+      "name": "Explain",
+      "description": "Returns where a state machine is and why, and for each rule whether it matches right now. For debugging rules: run it from Developer tools → Actions."
     }
   },
   "issues": {
     "flip_limit": {
       "title": "{machine} is changing state too often",
-      "description": "{machine} changed state {max_flips} times within a minute because of its rules, so it ignores them until the minute is up. Its rules may form a loop with another machine's. Check its rules, or raise its flip limit (the entry's Configure → Edit a state machine → Name, fallback, person and flip limit). This goes away after a restart or when the machine is edited."
+      "description": "{machine} changed state {max_flips} times within a minute because of its rules, so it ignores them until the minute is up. Its rules may form a loop with another machine's. Check its rules, or raise its flip limit (the entry's Configure → Edit a state machine → Name, fallback, person and more). This goes away after a restart or when the machine is edited."
     }
   }
 }

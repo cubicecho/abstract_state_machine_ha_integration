@@ -158,3 +158,43 @@ async def test_unload(hass: HomeAssistant) -> None:
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert hass.states.get(SELECT).state == "unavailable"
+
+
+async def test_state_sensors_follow_the_machine(hass: HomeAssistant) -> None:
+    hour = machine("Hour type", ["sleeping", "working", "free"], "free")
+    hour["state_sensors"] = True
+    hour["states"][0]["icon"] = "mdi:sleep"
+    await add_thing(hass, "Alice", [hour, machine("Day type", ["workday", "weekend"])])
+    sleeping = "binary_sensor.alice_hour_type_sleeping"
+    assert hass.states.get(sleeping).state == "off"
+    assert hass.states.get(sleeping).attributes["icon"] == "mdi:sleep"
+    assert hass.states.get("binary_sensor.alice_hour_type_free").state == "on"
+    assert len(hass.states.async_entity_ids("binary_sensor")) == 3  # only the machine that asked for them
+
+    await hass.services.async_call(
+        "select", "select_option", {"entity_id": "select.alice_hour_type", "option": "sleeping"}, blocking=True
+    )
+    assert hass.states.get(sleeping).state == "on"
+    assert hass.states.get("binary_sensor.alice_hour_type_free").state == "off"
+    device = er.async_get(hass).async_get(sleeping).device_id
+    assert device == er.async_get(hass).async_get("select.alice_hour_type").device_id
+
+
+async def test_state_sensor_named_like_the_device(hass: HomeAssistant) -> None:
+    dw = machine("Dishwasher", DISHWASHER_STATES)
+    dw["state_sensors"] = True
+    await add_thing(hass, "Dishwasher", [dw])
+    assert hass.states.get("binary_sensor.dishwasher_clean").attributes["friendly_name"] == "Dishwasher clean"
+
+
+async def test_device_triggers_come_from_ha(hass: HomeAssistant) -> None:
+    """HA's select integration already offers "<machine> changed from … to …" as a device trigger."""
+    from homeassistant.components.device_automation import DeviceAutomationType, async_get_device_automations
+    from homeassistant.setup import async_setup_component
+
+    assert await async_setup_component(hass, "device_automation", {})
+    entry = await add_thing(hass, "Dishwasher", [machine("Mode", DISHWASHER_STATES)])
+    device = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
+    automations = await async_get_device_automations(hass, DeviceAutomationType.TRIGGER, [device.id])
+    reg = er.async_get(hass).async_get("select.dishwasher_mode")
+    assert any(t["type"] == "current_option_changed" and t["entity_id"] == reg.id for t in automations[device.id])

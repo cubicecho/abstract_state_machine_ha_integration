@@ -117,7 +117,7 @@ async def _edit(hass: HomeAssistant, entry: MockConfigEntry, choice: str, machin
 async def test_reconfigure_menu(hass: HomeAssistant) -> None:
     entry = await add_thing(hass, "Alice", [machine("Day type", ["a", "b"])])
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["menu_options"] == ["edit_machine", "add_machine", "placement"]  # no removing the only one
+    assert result["menu_options"] == ["edit_machine", "add_machine", "copy_machine", "placement"]  # no removing the only one
     assert result["description_placeholders"] == {"thing": "Alice", "machines": "Day type"}
 
 
@@ -439,3 +439,59 @@ async def test_rename_updates_rules_from(hass: HomeAssistant) -> None:
     result = await _edit(hass, entry, "rename_state")
     await hass.config_entries.options.async_configure(result["flow_id"], {"state": "running", "new_name": "washing"})
     assert _rules(entry, "clean")[0]["from"] == ["washing"]
+
+
+# Copy, state sensors ----------------------------------------------------------------
+
+
+async def test_copy_a_machine_from_another_entry(hass: HomeAssistant) -> None:
+    day = machine("Day type", ["vacation", "workday", "weekend"], "weekend", machine_id="alice_day")
+    day["states"][0]["rules"] = [{"id": "r1", "name": "PTO", "kind": "condition",
+                                  "conditions": [{"condition": "state", "entity_id": "input_boolean.pto", "state": "on"}]}]
+    alice = await add_thing(hass, "Alice", [day])
+    bob = await add_thing(hass, "Bob", [machine("Hour type", ["a", "b"], machine_id="bob_hour")])
+
+    result = await _reconfigure(hass, bob, "copy_machine")
+    labels = {o["value"]: o["label"] for o in _fields(result)["source"]["selector"]["select"]["options"]}
+    assert labels == {f"{alice.entry_id}/alice_day": "Alice: Day type", f"{bob.entry_id}/bob_hour": "Bob: Hour type"}
+    flow_id = result["flow_id"]
+    result = await hass.config_entries.options.async_configure(flow_id, {"source": f"{bob.entry_id}/bob_hour"})
+    assert result["errors"] == {"name": "duplicate_machine"}  # same name, same entry
+    result = await hass.config_entries.options.async_configure(flow_id, {"source": f"{alice.entry_id}/alice_day"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    copy = machine_data(bob, "Day type")
+    assert copy["id"] != "alice_day"
+    assert copy["states"][0]["rules"][0]["id"] != "r1"
+    assert copy["states"][0]["rules"][0]["conditions"] == day["states"][0]["rules"][0]["conditions"]
+    assert hass.states.get("select.bob_day_type").state == "weekend"
+    assert machine_data(alice)["id"] == "alice_day"  # the original is untouched
+
+
+async def test_state_sensors_on_off_and_rename(hass: HomeAssistant) -> None:
+    entry = await add_thing(hass, "Alice", [machine("Hour type", ["sleeping", "working", "free"], "free")])
+    ent_reg = er.async_get(hass)
+    result = await _edit(hass, entry, "settings")
+    await hass.config_entries.options.async_configure(
+        result["flow_id"], {"name": "Hour type", "fallback": "free", "max_flips": 10, "state_sensors": True}
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.alice_hour_type_free").state == "on"
+    assert hass.states.get("binary_sensor.alice_hour_type_sleeping").state == "off"
+
+    result = await _edit(hass, entry, "rename_state")
+    await hass.config_entries.options.async_configure(result["flow_id"], {"state": "working", "new_name": "busy"})
+    await hass.async_block_till_done()
+    # The renamed state keeps its sensor: same entity id, new unique id.
+    reg = ent_reg.async_get("binary_sensor.alice_hour_type_working")
+    assert reg is not None and reg.unique_id == "m_hour_type_is_busy"
+    assert hass.states.get("binary_sensor.alice_hour_type_working").attributes["friendly_name"] == "Alice Hour type busy"
+
+    result = await _edit(hass, entry, "settings")
+    await hass.config_entries.options.async_configure(
+        result["flow_id"], {"name": "Hour type", "fallback": "free", "max_flips": 10, "state_sensors": False}
+    )
+    await hass.async_block_till_done()
+    assert hass.states.async_entity_ids("binary_sensor") == []
+    assert ent_reg.async_get("binary_sensor.alice_hour_type_free") is None

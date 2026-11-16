@@ -70,6 +70,7 @@ class MachineRuntime:
         self.status: engine.Status | None = None
         self.computed: engine.Computed | None = None  # what the condition rules say
         self.flip_limited = False
+        self.invalid_rules: dict[str, str] = {}  # rule id → why it was skipped at setup
         self._listeners: list[Listener] = []
         self._conditions: dict[str, list[Checker]] = {}  # condition rules, by rule id
         self._trigger_conditions: dict[str, list[Checker]] = {}  # trigger rules' extra checks
@@ -122,6 +123,7 @@ class MachineRuntime:
                 elif rule.kind == KIND_TRIGGER:
                     await self._async_attach_trigger(state.name, rule)
             except (vol.Invalid, HomeAssistantError) as err:
+                self.invalid_rules[rule.id] = str(err)
                 _LOGGER.error("%s: rule \"%s\" (into %s) is invalid, skipping it: %s",
                               self.machine.name, rule.name, state.name, err)
         if polling:  # time, sun and template conditions can change without telling us
@@ -141,6 +143,7 @@ class MachineRuntime:
                 checker.async_unload()
         self._conditions.clear()
         self._trigger_conditions.clear()
+        self.invalid_rules.clear()
         for timer in (self._hold_timer, self._resume_timer):
             if timer:
                 timer()
@@ -259,6 +262,47 @@ class MachineRuntime:
                 self._apply(result, context)
                 return
         self._apply((self.status, None), context)
+
+    # Explain --------------------------------------------------------------------
+
+    @callback
+    def explain(self) -> dict[str, Any]:
+        """Where the machine is, why, and what each rule says right now (``explain`` action)."""
+        status = self.status
+        computed = self._compute() if self._started else None
+        rules: list[dict[str, Any]] = []
+        for state, rule in self.machine.rules():
+            item: dict[str, Any] = {"state": state.name, "name": rule.name, "kind": rule.kind}
+            if rule.id in self.invalid_rules:
+                item["error"] = self.invalid_rules[rule.id]
+            elif self._started and rule.kind == KIND_CONDITION:
+                item["matches"] = _check(self._conditions.get(rule.id, []), None)
+            elif self._started:
+                item["from"] = list(rule.from_states)
+                item["from_ok"] = status is not None and (not rule.from_states or status.state in rule.from_states)
+                if rule.conditions:
+                    item["conditions_pass"] = _check(self._trigger_conditions.get(rule.id, []), None)
+            rules.append(item)
+        result: dict[str, Any] = {
+            "machine": self.machine.name,
+            "state": status.state if status else None,
+            "previous": status.previous if status else None,
+            "reason": status.reason if status else None,
+            "changed_at": status.changed_at.isoformat() if status else None,
+            "manual": status.manual if status else None,
+            "fallback": self.machine.fallback,
+            "started": self._started,
+            "flip_limited": self.flip_limited,
+            "rules": rules,
+        }
+        if self.machine.has_condition_rules:
+            result["rules_state"] = computed.state if computed else None
+            result["rules_reason"] = computed.reason if computed else None
+            result["override"] = bool(status and status.held)
+            result["override_until"] = (
+                status.hold_until.isoformat() if status and status.held and status.hold_until else None
+            )
+        return result
 
     # Output -------------------------------------------------------------------
 

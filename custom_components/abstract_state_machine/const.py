@@ -32,3 +32,4 @@ ATTR_FLIP_LIMITED = "flip_limited"
 
 SERVICE_SET_STATE = "set_state"
 SERVICE_CLEAR_OVERRIDE = "clear_override"
+SERVICE_EXPLAIN = "explain"

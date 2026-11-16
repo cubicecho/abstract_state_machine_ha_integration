@@ -2,7 +2,7 @@
 
 A Home Assistant integration for your own **state machines**: "Alice's day type" (workday / weekend / holiday), "the dishwasher" (cleared / loaded / running / clean), "house mode", whatever you need. You name the states. Each machine is an entity whose state you can use in automations, dashboards and other machines.
 
-**Status: 0.4.0.** Machines move on their own through **rules**: HA triggers and conditions, the same pickers as the automation editor. You can still set them by hand or from automations. See [`.agents/plan.md`](.agents/plan.md).
+**Status: 0.5.0.** Machines move on their own through **rules**: HA triggers and conditions, the same pickers as the automation editor. You can still set them by hand or from automations. See [`.agents/plan.md`](.agents/plan.md).
 
 ## Install
 
@@ -20,8 +20,9 @@ Then add its first machine: a name, its states (type one, press Enter, type the 
 
 On the integration page, each person or thing is its own entry ("Alice", "Dishwasher"), with its device and its machines' entities. **Add entry** adds another. An entry's **Configure** has:
 
-- **Edit a state machine**: rules, states, renames, fallback, person, flip limit, icons.
+- **Edit a state machine**: rules, states, renames, fallback, person, flip limit, state sensors, icons.
 - **Add a state machine** to the same person or thing.
+- **Copy a state machine** from this or another person or thing, e.g. Bob's day type from Alice's. It copies states, rules, icons and settings; rules that read Alice's calendar still do, so edit them afterwards.
 - **Remove a state machine** (when there's more than one; to remove the last, delete the entry).
 - **Rename, or change the device**: move its machines to another device, or off devices. They keep their state and entity IDs.
 
@@ -120,6 +121,10 @@ One entity per machine, on the person or thing's device: `select.<device>_<machi
 - with condition rules: `rules_state` (what they say now), `override`, `override_until`
 - `flip_limited` while it's over its flip limit
 
+Optionally, **a binary sensor per state** (Edit a state machine → Name, fallback, person and more → *A binary sensor per state*): `binary_sensor.alice_hour_type_sleeping` is on while Alice's hour type is `sleeping`. Handy for dashboards, HomeKit, or anything that wants a plain on/off. Renaming a state keeps its sensor.
+
+In the automation editor's **device** triggers and conditions, HA's own select support already offers "Mode changed from … to …" for a machine on a device.
+
 ### Notify when the dishwasher is done
 
 A state trigger on the machine's entity:
@@ -150,6 +155,16 @@ data:
 ```
 
 `select.select_option` works too, and records the reason as `manual`. On a machine with condition rules, add `hold: "02:00:00"` to go back to the rules after two hours at the latest, or call `abstract_state_machine.clear_override` to go back now.
+
+### Why is it in this state?
+
+Developer tools → Actions → **Explain** (`abstract_state_machine.explain`) on a machine returns its state, reason, hold, what its condition rules say, and for every rule whether it matches right now (condition rules), whether it could fire from here (trigger rules: `from_ok`, `conditions_pass`), or why it was skipped (`error`).
+
+```yaml
+action: abstract_state_machine.explain
+target:
+  entity_id: select.alice_day_type
+```
 
 ## Development
 

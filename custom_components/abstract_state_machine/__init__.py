@@ -25,13 +25,13 @@ from .const import (
     PLACEMENT_EXISTING,
     PLACEMENT_VIRTUAL,
 )
-from .data import AsmConfigEntry, Thing, unique_id
+from .data import AsmConfigEntry, Thing, wanted_unique_ids
 from .runtime import MachineRuntime
 
 _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-PLATFORMS = [Platform.SELECT]
+PLATFORMS = [Platform.SELECT, Platform.BINARY_SENSOR]
 
 MANUFACTURER = "Abstract State Machine"
 VIRTUAL_MODEL = "Virtual device"
@@ -88,9 +88,9 @@ def _async_device(hass: HomeAssistant, entry: AsmConfigEntry) -> dr.AnyDeviceEnt
 
 
 def _async_remove_removed_machines(hass: HomeAssistant, entry: AsmConfigEntry) -> None:
-    """Drop the registry entries of machines that were removed."""
+    """Drop the registry entries of removed machines, and of state sensors that were turned off or removed."""
     ent_reg = er.async_get(hass)
-    wanted = {unique_id(runtime.machine_id) for runtime in entry.runtime_data.machines}
+    wanted = wanted_unique_ids(entry.runtime_data)
     for reg_entry in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
         if reg_entry.unique_id not in wanted:
             ent_reg.async_remove(reg_entry.entity_id)
