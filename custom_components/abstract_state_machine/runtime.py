@@ -10,10 +10,11 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import probatio as vol  # HA 2026.10+ validates with probatio
-from homeassistant.core import CALLBACK_TYPE, Context, HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, Context, Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import condition as condition_helper
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import trigger as trigger_helper
 from homeassistant.helpers.event import async_track_point_in_utc_time, async_track_time_change
@@ -21,8 +22,9 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.hass_dict import HassKey
 
 from . import engine
-from .const import DOMAIN
-from .model import KIND_CONDITION, KIND_TRIGGER, MachineDef, RuleDef
+from .const import DOMAIN, EVENT_RULE_APPLIED
+from .model import KIND_CONDITION, KIND_TRIGGER, MachineDef, RuleDef, referenced_entities
+from .timeinstate import TimeInState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,6 +73,10 @@ class MachineRuntime:
         self.computed: engine.Computed | None = None  # what the condition rules say
         self.flip_limited = False
         self.invalid_rules: dict[str, str] = {}  # rule id → why it was skipped at setup
+        self.time: TimeInState | None = None  # time in each state today
+        self.entity_id: str | None = None  # the select's, once added (for the activity log)
+        self._true_since: dict[str, datetime] = {}  # condition rules with a wait: true since when
+        self._wait_timer: CALLBACK_TYPE | None = None
         self._listeners: list[Listener] = []
         self._conditions: dict[str, list[Checker]] = {}  # condition rules, by rule id
         self._trigger_conditions: dict[str, list[Checker]] = {}  # trigger rules' extra checks
@@ -85,6 +91,10 @@ class MachineRuntime:
     def issue_id(self) -> str:
         return f"flip_limit_{self.machine_id}"
 
+    @property
+    def broken_issue_id(self) -> str:
+        return f"broken_rules_{self.machine_id}"
+
     @callback
     def async_add_listener(self, listener: Listener) -> Callable[[], None]:
         """Call ``listener(context)`` on every change of state or attributes."""
@@ -94,9 +104,15 @@ class MachineRuntime:
     # Lifecycle ------------------------------------------------------------
 
     @callback
-    def async_restore(self, restored: engine.Status | None) -> None:
+    def async_restore(self, restored: engine.Status | None, time: TimeInState | None = None) -> None:
         """Start from the restored status, or the fallback. Not a change of state."""
         renames = self.hass.data.get(_RENAMES, {}).pop(self.machine_id, {})
+        if time is not None and renames:
+            time = replace(
+                time,
+                state=renames.get(time.state, time.state) if time.state else None,
+                totals={renames.get(name, name): seconds for name, seconds in time.totals.items()},
+            )
         if restored is not None and renames:
             restored = replace(
                 restored,
@@ -106,6 +122,11 @@ class MachineRuntime:
                 if restored.held_against else None,
             )
         self.status = engine.initial(self.machine, restored, dt_util.utcnow())
+        now = dt_util.now()
+        self.time = (
+            time.resumed(now).switch(self.status.state, now) if time is not None
+            else TimeInState.start(self.status.state, now)
+        )
         self._notify(None)
 
     async def async_start(self) -> None:
@@ -128,6 +149,9 @@ class MachineRuntime:
                               self.machine.name, rule.name, state.name, err)
         if polling:  # time, sun and template conditions can change without telling us
             self._unsubs.append(async_track_time_change(self.hass, self._tick, second=0))
+        self._seed_waits()
+        self._async_check_broken()
+        self._unsubs.append(self.hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._registry_updated))
         self._started = True
         self._schedule_hold_timer()
         self._evaluate()
@@ -144,10 +168,11 @@ class MachineRuntime:
         self._conditions.clear()
         self._trigger_conditions.clear()
         self.invalid_rules.clear()
-        for timer in (self._hold_timer, self._resume_timer):
+        self._true_since.clear()
+        for timer in (self._hold_timer, self._resume_timer, self._wait_timer):
             if timer:
                 timer()
-        self._hold_timer = self._resume_timer = None
+        self._hold_timer = self._resume_timer = self._wait_timer = None
 
     async def _async_checkers(self, raw: tuple[dict[str, Any], ...]) -> list[Checker]:
         configs = await async_validate_conditions(self.hass, list(raw))
@@ -200,13 +225,56 @@ class MachineRuntime:
         """
         if not self._started or self.status is None:
             return
-        self.computed = self._compute()
         now = max(now, dt_util.utcnow()) if now else dt_util.utcnow()
+        self.computed = self._compute(now)
         self._apply(engine.apply_computed(self.status, self.computed, now), None)
 
-    def _compute(self) -> engine.Computed | None:
-        matches = {rule_id: _check(checkers, None) for rule_id, checkers in self._conditions.items()}
+    def _compute(self, now: datetime | None = None) -> engine.Computed | None:
+        """What the condition rules say. A rule with a wait counts once it's been true that long."""
+        now = now or dt_util.utcnow()
+        matches: dict[str, bool] = {}
+        next_deadline: datetime | None = None
+        for _state, rule in self.machine.rules():
+            if (checkers := self._conditions.get(rule.id)) is None:
+                continue
+            true = _check(checkers, None)
+            if not true or not rule.for_seconds:
+                self._true_since.pop(rule.id, None)
+                matches[rule.id] = true
+                continue
+            deadline = self._true_since.setdefault(rule.id, now) + timedelta(seconds=rule.for_seconds)
+            matches[rule.id] = now >= deadline
+            if now < deadline and (next_deadline is None or deadline < next_deadline):
+                next_deadline = deadline
+        self._schedule_wait_timer(next_deadline)
         return engine.compute(self.machine, matches)
+
+    def _seed_waits(self) -> None:
+        """After a restart, a waiting rule that already put the machine where it is counts as waited.
+
+        Otherwise every restart would drop the machine out of, say, "away" until the wait ran again.
+        """
+        status = self.status
+        if status is None:
+            return
+        state = self.machine.state(status.state)
+        for rule in state.rules if state else ():
+            if rule.for_seconds and rule.id in self._conditions and _check(self._conditions[rule.id], None):
+                self._true_since[rule.id] = min(status.changed_at, dt_util.utcnow()) - timedelta(seconds=rule.for_seconds)
+
+    def _schedule_wait_timer(self, deadline: datetime | None) -> None:
+        if self._wait_timer:
+            self._wait_timer()
+            self._wait_timer = None
+        if deadline is None or not self._started:
+            return
+
+        @callback
+        def waited(now: datetime) -> None:
+            self._wait_timer = None
+            self._evaluate(now)
+
+        self._wait_timer = async_track_point_in_utc_time(self.hass, waited, deadline)
 
     @callback
     def _fired(self, to: str, rule: RuleDef, variables: dict[str, Any], context: Context | None) -> None:
@@ -276,7 +344,12 @@ class MachineRuntime:
             if rule.id in self.invalid_rules:
                 item["error"] = self.invalid_rules[rule.id]
             elif self._started and rule.kind == KIND_CONDITION:
-                item["matches"] = _check(self._conditions.get(rule.id, []), None)
+                true = _check(self._conditions.get(rule.id, []), None)
+                item["matches"] = true and (not rule.for_seconds or rule.id not in self._waiting())
+                if rule.for_seconds:
+                    item["for_seconds"] = rule.for_seconds
+                    if rule.id in self._waiting():
+                        item["waiting_until"] = self._waiting()[rule.id].isoformat()
             elif self._started:
                 item["from"] = list(rule.from_states)
                 item["from_ok"] = status is not None and (not rule.from_states or status.state in rule.from_states)
@@ -304,6 +377,49 @@ class MachineRuntime:
             )
         return result
 
+    def _waiting(self) -> dict[str, datetime]:
+        """Rules true but still waiting: rule id → when they'll count."""
+        now = dt_util.utcnow()
+        waits = {rule.id: rule.for_seconds for _, rule in self.machine.rules() if rule.for_seconds}
+        return {
+            rule_id: deadline
+            for rule_id, since in self._true_since.items()
+            if rule_id in waits and (deadline := since + timedelta(seconds=waits[rule_id])) > now
+        }
+
+    # Broken rules -------------------------------------------------------------
+
+    @callback
+    def _registry_updated(self, event: Event[er.EventEntityRegistryUpdatedData]) -> None:
+        """An entity was added, removed or renamed: a rule may have broken, or been mended."""
+        if self._started:
+            self._async_check_broken()
+
+    @callback
+    def _async_check_broken(self) -> None:
+        """A repair issue listing rules that were skipped, or that read entities that don't exist."""
+        ent_reg = er.async_get(self.hass)
+        problems: list[str] = []
+        for state, rule in self.machine.rules():
+            if rule.id in self.invalid_rules:
+                problems.append(f"- **{rule.name}** (into {state.name}): {self.invalid_rules[rule.id]}")
+                continue
+            missing = sorted(
+                entity_id
+                for entity_id in referenced_entities([list(rule.triggers), list(rule.conditions)])
+                if self.hass.states.get(entity_id) is None and ent_reg.async_get(entity_id) is None
+            )
+            if missing:
+                problems.append(f"- **{rule.name}** (into {state.name}): reads {', '.join(missing)}, which doesn't exist")
+        if not problems:
+            ir.async_delete_issue(self.hass, DOMAIN, self.broken_issue_id)
+            return
+        ir.async_create_issue(
+            self.hass, DOMAIN, self.broken_issue_id,
+            is_fixable=False, severity=ir.IssueSeverity.WARNING, translation_key="broken_rules",
+            translation_placeholders={"machine": self.machine.name, "problems": "\n".join(problems)},
+        )
+
     # Output -------------------------------------------------------------------
 
     @callback
@@ -314,8 +430,32 @@ class MachineRuntime:
         if transition is not None and not transition.manual and not self._allow_flip(transition.at):
             return
         self.status = status
+        if transition is not None:
+            if self.time is not None:
+                self.time = self.time.switch(status.state, dt_util.now())
+            if not transition.manual or transition.reason != engine.REASON_MANUAL:
+                context = self._log_reason(transition, context)
         self._schedule_hold_timer()
         self._notify(context)
+
+    def _log_reason(self, transition: engine.Transition, context: Context | None) -> Context:
+        """Say why in the activity log: "Day type moved to holiday (PTO today)".
+
+        Like automations do it: an event in a new context (a child of the input's),
+        and the state change in that same context. ``logbook.py`` describes the event.
+        """
+        reason_context = Context(parent_id=context.id if context else None)
+        self.hass.bus.async_fire(
+            EVENT_RULE_APPLIED,
+            {
+                "entity_id": self.entity_id,
+                "machine": self.machine.name,
+                "reason": transition.reason,
+                "to": transition.to_state,
+            },
+            context=reason_context,
+        )
+        return reason_context
 
     def _notify(self, context: Context | None) -> None:
         for listener in list(self._listeners):

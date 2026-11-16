@@ -3,6 +3,10 @@ from __future__ import annotations
 
 DOMAIN = "abstract_state_machine"
 
+# Fired when a rule (or a set_state with a reason) changes a machine, in the
+# context the state change is written with, so the activity log can say why.
+EVENT_RULE_APPLIED = f"{DOMAIN}_rule_applied"
+
 # One config entry per person or thing. Its options say where its machines'
 # entities live, and hold the machines.
 CONF_MACHINES = "machines"

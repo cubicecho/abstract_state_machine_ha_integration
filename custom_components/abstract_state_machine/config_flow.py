@@ -35,7 +35,7 @@ from .const import (
     PLACEMENT_VIRTUAL,
     PLACEMENTS,
 )
-from .data import state_sensor_unique_id, unique_id
+from .data import state_sensor_unique_id, time_sensor_unique_id, unique_id
 from .runtime import async_note_rename, async_validate_conditions, async_validate_triggers
 
 CONF_NAME = "name"
@@ -48,11 +48,14 @@ CONF_TRIGGERS = "triggers"
 CONF_CONDITIONS = "conditions"
 CONF_SOURCE = "source"
 CONF_STATE_SENSORS = "state_sensors"
+CONF_TIME_SENSORS = "time_sensors"
+CONF_FOR = "for"
 
 TEXT = selector.TextSelector()
 STATE_LIST = selector.TextSelector(selector.TextSelectorConfig(multiple=True))
 PERSON = selector.EntitySelector(selector.EntitySelectorConfig(domain="person"))
 DEVICE = selector.DeviceSelector()
+DURATION = selector.DurationSelector()
 MAX_FLIPS = selector.NumberSelector(
     selector.NumberSelectorConfig(min=1, max=model.MAX_MAX_FLIPS, step=1, mode=selector.NumberSelectorMode.BOX)
 )
@@ -491,6 +494,8 @@ class MachinesOptionsFlow(OptionsFlow):
                 "kind": model.KIND_CONDITION,
                 "conditions": _as_list(user_input.get(CONF_CONDITIONS)),
             }
+            if model.duration_seconds(user_input.get(CONF_FOR)):
+                rule[CONF_FOR] = user_input[CONF_FOR]
             current = rule
             if not rule["name"]:
                 errors[CONF_NAME] = "name_required"
@@ -506,6 +511,7 @@ class MachinesOptionsFlow(OptionsFlow):
                 vol.Required(
                     CONF_CONDITIONS, description={"suggested_value": (current or {}).get("conditions")}
                 ): CONDITIONS,
+                vol.Optional(CONF_FOR, description={"suggested_value": (current or {}).get(CONF_FOR)}): DURATION,
             }
         )
         return self.async_show_form(
@@ -598,6 +604,7 @@ class MachinesOptionsFlow(OptionsFlow):
                     user_input.get(CONF_PERSON),
                     user_input.get(CONF_MAX_FLIPS, machine.max_flips),
                     user_input.get(CONF_STATE_SENSORS, machine.state_sensors),
+                    user_input.get(CONF_TIME_SENSORS, machine.time_sensors),
                 ))
         schema = vol.Schema(
             {
@@ -606,16 +613,17 @@ class MachinesOptionsFlow(OptionsFlow):
                 vol.Optional(CONF_PERSON, description={"suggested_value": machine.person}): PERSON,
                 vol.Required(CONF_MAX_FLIPS, default=machine.max_flips): MAX_FLIPS,
                 vol.Required(CONF_STATE_SENSORS, default=machine.state_sensors): selector.BooleanSelector(),
+                vol.Required(CONF_TIME_SENSORS, default=machine.time_sensors): selector.BooleanSelector(),
             }
         )
         return self.async_show_form(step_id="settings", data_schema=schema, errors=errors)
 
     def _move_state_sensor(self, old: str, new: str) -> None:
-        """A renamed state keeps its binary sensor (and its entity id and history)."""
+        """A renamed state keeps its sensors (and their entity ids and history)."""
         ent_reg = er.async_get(self.hass)
-        old_id = state_sensor_unique_id(self._machine_id, old)
-        if entity_id := ent_reg.async_get_entity_id("binary_sensor", DOMAIN, old_id):
-            ent_reg.async_update_entity(entity_id, new_unique_id=state_sensor_unique_id(self._machine_id, new))
+        for platform, make_id in (("binary_sensor", state_sensor_unique_id), ("sensor", time_sensor_unique_id)):
+            if entity_id := ent_reg.async_get_entity_id(platform, DOMAIN, make_id(self._machine_id, old)):
+                ent_reg.async_update_entity(entity_id, new_unique_id=make_id(self._machine_id, new))
 
     async def async_step_icons(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         raw = self._raw_machine()
@@ -650,6 +658,13 @@ async def _invalid(validation: Any) -> str | None:
     return None
 
 
+def _duration(seconds: int) -> str:
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    parts = [f"{hours} h" if hours else "", f"{minutes} min" if minutes else "", f"{secs} s" if secs else ""]
+    return " ".join(part for part in parts if part)
+
+
 def _count(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
@@ -664,7 +679,8 @@ def _describe_rules(state: model.StateDef) -> str:
             extra = f", if {_count(len(rule.conditions), 'condition')}" if rule.conditions else ""
             lines.append(f"- **{rule.name}**: trigger rule{where} ({_count(len(rule.triggers), 'trigger')}{extra})")
         else:
-            lines.append(f"- **{rule.name}**: condition rule ({_count(len(rule.conditions), 'condition')})")
+            wait = f", once true for {_duration(rule.for_seconds)}" if rule.for_seconds else ""
+            lines.append(f"- **{rule.name}**: condition rule ({_count(len(rule.conditions), 'condition')}{wait})")
     return "\n".join(lines)
 
 

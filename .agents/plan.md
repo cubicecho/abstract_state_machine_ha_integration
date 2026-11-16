@@ -185,6 +185,10 @@ Planned files under `custom_components/abstract_state_machine/`:
 4. **Extras** ✅ (2026-11-15, 0.5.0). **Copy a state machine** (Configure; from any entry, new machine and rule ids), **`explain`** (response-only action: state, reason, hold, rules' answer, per rule `matches` / `from_ok` / `conditions_pass` / `error`), **a binary sensor per state** (opt-in per machine; renames keep it). 112 tests. Differences from the plan:
    - No device triggers of our own: HA's select integration already offers `current_option_changed` (from/to) for any select on a device. A test checks it lists ours.
    - No card yet. It needs a frontend build (like map-fusion's); `explain` already returns what it would draw. Next, if wanted.
+5. **Browser walk-through** ✅ (2026-11-16, 0.5.1). Headless Playwright on a throwaway HA: integration type `device`, brand icon, static menu titles, "State" label, calendar condition fields. CI green (HACS needed a repo description and topics).
+6. **Robustness and insight** ✅ (2026-11-16, 0.6.0). Condition rules can wait ("only once true for"); the activity log says why ("moved to holiday (PTO today)"); broken rules raise a repair issue (invalid, or reading entities that don't exist; re-checked on registry changes); optional time-in-each-state-today sensors (kept across restarts). Checked in the browser too. 125 tests.
+   - The activity log needs an event after all (`abstract_state_machine_rule_applied`), but only as the log's context origin, like `automation_triggered`.
+   - Still open from the ideas list: hold until a time, keep state while inputs are unavailable, copy with entity swapping, diagnostics, live edits without the "Unavailable" blip, the card.
 
 ## Open questions
 

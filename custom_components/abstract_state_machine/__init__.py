@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.typing import ConfigType
 
 from . import model, services
@@ -31,7 +32,7 @@ from .runtime import MachineRuntime
 _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-PLATFORMS = [Platform.SELECT, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.SELECT, Platform.BINARY_SENSOR, Platform.SENSOR]
 
 MANUFACTURER = "Abstract State Machine"
 VIRTUAL_MODEL = "Virtual device"
@@ -48,6 +49,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AsmConfigEntry) -> bool:
     machines = [MachineRuntime(hass, model.parse(raw)) for raw in model.machines_of(entry.options)]
     entry.runtime_data = Thing(_async_device(hass, entry), machines)
     _async_remove_removed_machines(hass, entry)
+    _async_remove_stale_issues(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     # After the entities have moved, so removing the old device doesn't take them along.
     _async_remove_unused_virtual_device(hass, entry)
@@ -94,6 +96,19 @@ def _async_remove_removed_machines(hass: HomeAssistant, entry: AsmConfigEntry) -
     for reg_entry in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
         if reg_entry.unique_id not in wanted:
             ent_reg.async_remove(reg_entry.entity_id)
+
+
+def _async_remove_stale_issues(hass: HomeAssistant) -> None:
+    """Repair issues of machines that no longer exist (removed, or their entry deleted)."""
+    machine_ids = {
+        raw["id"] for entry in hass.config_entries.async_entries(DOMAIN) for raw in model.machines_of(entry.options)
+    }
+    for domain, issue_id in list(ir.async_get(hass).issues):
+        if domain != DOMAIN:
+            continue
+        for prefix in ("broken_rules_", "flip_limit_"):
+            if issue_id.startswith(prefix) and issue_id.removeprefix(prefix) not in machine_ids:
+                ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
 def _async_remove_unused_virtual_device(hass: HomeAssistant, entry: AsmConfigEntry) -> None:

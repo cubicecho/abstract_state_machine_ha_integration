@@ -2,7 +2,7 @@
 
 A Home Assistant integration for your own **state machines**: "Alice's day type" (workday / weekend / holiday), "the dishwasher" (cleared / loaded / running / clean), "house mode", whatever you need. You name the states. Each machine is an entity whose state you can use in automations, dashboards and other machines.
 
-**Status: 0.5.0.** Machines move on their own through **rules**: HA triggers and conditions, the same pickers as the automation editor. You can still set them by hand or from automations. See [`.agents/plan.md`](.agents/plan.md).
+**Status: 0.6.0.** Machines move on their own through **rules**: HA triggers and conditions, the same pickers as the automation editor. You can still set them by hand or from automations. See [`.agents/plan.md`](.agents/plan.md).
 
 ## Install
 
@@ -35,11 +35,15 @@ Rules belong to the state they lead to: **Configure** → Edit a state machine �
 
 Condition rules are re-checked whenever an entity they use changes, and once a minute for time, sun and template conditions.
 
+**Waiting before switching:** a condition rule can have **Only once true for**, e.g. 10 minutes on `away` ("nobody home"). The rule counts only after its conditions have held that long, so a phone dropping off Wi-Fi for a moment doesn't flip the house. Any moment of "not true" starts the wait again, and leaving is immediate: someone coming home moves the house straight back. A machine already in the state when HA restarts stays there; the wait isn't run again.
+
 **Setting a state by hand** (or a trigger rule moving the machine) **holds** against its condition rules until their answer changes. Pick `holiday` on a workday, and the machine stays there until the rules say something other than `workday` (at midnight, say), then follows them again. `set_state` can also hold for a fixed time, and `clear_override` ends a hold now. An input that's unavailable counts as "doesn't match", as in automations.
 
 **Machines can read each other**: hour type can use "day type is workday", house mode can use everyone's hour type. If a new rule makes machines read each other in a loop, the flow warns you before saving. Each machine also has a **flip limit** (default 10): after that many rule-driven changes in a minute, it ignores its rules until the minute is up and raises a repair issue.
 
-The machine's `reason` attribute names the rule that put it in its state; `rules_state` shows what its condition rules say right now.
+The machine's `reason` attribute names the rule that put it in its state; `rules_state` shows what its condition rules say right now. The **activity log** says it too: "Day type moved to holiday (PTO today)", next to the change itself, for rule changes and for `set_state` with a reason. (That line comes from an `abstract_state_machine_rule_applied` event fired just for the log.)
+
+**Broken rules show up under Settings → Repairs**: a rule that couldn't be set up, or that reads an entity that doesn't exist (deleted, or renamed: rules don't follow renames), gets a warning naming the machine, the rule and the entity. It goes away once fixed, or once the entity is back.
 
 ## Calendar events
 
@@ -123,6 +127,8 @@ One entity per machine, on the person or thing's device: `select.<device>_<machi
 
 Optionally, **a binary sensor per state** (Edit a state machine → Name, fallback, person and more → *A binary sensor per state*): `binary_sensor.alice_hour_type_sleeping` is on while Alice's hour type is `sleeping`. Handy for dashboards, HomeKit, or anything that wants a plain on/off. Renaming a state keeps its sensor.
 
+Optionally, **time in each state today** (same settings form → *Time in each state today*): `sensor.alice_hour_type_working_today` is the hours Alice's hour type has been `working` since midnight. It resets at midnight, keeps its count across restarts (time while HA is down isn't counted), and is a normal duration sensor for statistics and dashboards.
+
 In the automation editor's **device** triggers and conditions, HA's own select support already offers "Mode changed from … to …" for a machine on a device.
 
 ### Notify when the dishwasher is done
@@ -158,7 +164,7 @@ data:
 
 ### Why is it in this state?
 
-Developer tools → Actions → **Explain** (`abstract_state_machine.explain`) on a machine returns its state, reason, hold, what its condition rules say, and for every rule whether it matches right now (condition rules), whether it could fire from here (trigger rules: `from_ok`, `conditions_pass`), or why it was skipped (`error`).
+Developer tools → Actions → **Explain** (`abstract_state_machine.explain`) on a machine returns its state, reason, hold, what its condition rules say, and for every rule whether it matches right now (condition rules; with a wait, also `for_seconds` and `waiting_until`), whether it could fire from here (trigger rules: `from_ok`, `conditions_pass`), or why it was skipped (`error`).
 
 ```yaml
 action: abstract_state_machine.explain

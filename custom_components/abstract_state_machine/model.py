@@ -25,6 +25,7 @@ A machine looks like::
                         "from": ["cleared", "loaded"],
                         "triggers": [{"trigger": "numeric_state", …}],
                         "conditions": [],
+                        "for": {"minutes": 10},   # condition rules: only once true this long
                     },
                 ],
             },
@@ -34,6 +35,7 @@ A machine looks like::
         "person": "person.alice",   # optional
         "max_flips": 10,            # rule-driven changes allowed per minute
         "state_sensors": false,     # a binary sensor per state
+        "time_sensors": false,      # a "time in this state today" sensor per state
     }
 
 Triggers and conditions are stored exactly as the automation editor sends
@@ -76,7 +78,8 @@ class RuleDef:
 
     A trigger rule fires on ``triggers`` (if the machine is in one of
     ``from_states``, or any state when empty, and ``conditions`` pass). A
-    condition rule matches while all its ``conditions`` are true.
+    condition rule matches while all its ``conditions`` are true, and only
+    once they've been true for ``for_seconds`` when that's set.
     """
 
     id: str
@@ -85,6 +88,7 @@ class RuleDef:
     from_states: tuple[str, ...] = ()
     triggers: tuple[dict[str, Any], ...] = ()
     conditions: tuple[dict[str, Any], ...] = ()
+    for_seconds: int = 0
 
 
 @dataclass(frozen=True)
@@ -107,6 +111,7 @@ class MachineDef:
     max_flips: int = DEFAULT_MAX_FLIPS
     id: str = ""
     state_sensors: bool = False
+    time_sensors: bool = False
 
     @property
     def names(self) -> list[str]:
@@ -210,6 +215,7 @@ def parse(data: Mapping[str, Any]) -> MachineDef:
         person=data.get("person") or None,
         max_flips=_max_flips(data.get("max_flips")),
         state_sensors=bool(data.get("state_sensors")),
+        time_sensors=bool(data.get("time_sensors")),
     )
 
 
@@ -226,9 +232,34 @@ def _parse_rule(raw: Any, names: list[str]) -> RuleDef | None:
         name=str(raw.get("name") or "").strip() or kind,
         kind=kind,
         from_states=tuple(s for s in raw.get("from") or [] if s in names) if kind == KIND_TRIGGER else (),
+        for_seconds=duration_seconds(raw.get("for")) if kind == KIND_CONDITION else 0,
         triggers=tuple(dict(t) for t in triggers),
         conditions=tuple(dict(c) for c in conditions),
     )
+
+
+def duration_seconds(value: Any) -> int:
+    """Seconds in a duration as the UI or YAML gives it: ``{"days", "hours", "minutes", "seconds"}``,
+    ``"HH:MM:SS"`` or a number of seconds. Anything else is 0."""
+    try:
+        if isinstance(value, Mapping):
+            return max(0, int(
+                float(value.get("days") or 0) * 86400
+                + float(value.get("hours") or 0) * 3600
+                + float(value.get("minutes") or 0) * 60
+                + float(value.get("seconds") or 0)
+            ))
+        if isinstance(value, str) and ":" in value:
+            parts = [float(part) for part in value.split(":")]
+            while len(parts) < 3:
+                parts.insert(0, 0.0)
+            hours, minutes, seconds = parts[-3:]
+            return max(0, int(hours * 3600 + minutes * 60 + seconds))
+        if isinstance(value, (int, float, str)) and str(value).strip():
+            return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        pass
+    return 0
 
 
 def _max_flips(value: Any) -> int:
@@ -294,6 +325,7 @@ def with_settings(
     person: str | None,
     max_flips: Any,
     state_sensors: bool = False,
+    time_sensors: bool = False,
 ) -> dict[str, Any]:
     return _with_fallback({
         **data,
@@ -302,6 +334,7 @@ def with_settings(
         "person": person or None,
         "max_flips": _max_flips(max_flips),
         "state_sensors": bool(state_sensors),
+        "time_sensors": bool(time_sensors),
     })
 
 

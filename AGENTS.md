@@ -2,7 +2,7 @@
 
 A Home Assistant integration (`integration_type: device`, so it lives under Integrations, not Helpers, and its page says "Add device") for building **state machines** in the UI. The user names each machine, adds their own states, and picks for each state the rules, HA triggers and conditions, that move the machine into it. Each machine is a `select` entity. Example machines, built by the user, not built in: per-person **day type** and **hour type**, **house mode**, a **dishwasher** cycle.
 
-**Status: phase 4 done (0.5.0).** One entry per person or thing, its machines in the entry's options (no subentries); trigger and condition rules, holds, flip limit, loop warning; a `calendar_event` condition; README recipes; copy machine, `explain`, optional state binary sensors. No transition events (for now). Next: maybe a card that draws the machine. See [`.agents/plan.md`](.agents/plan.md).
+**Status: 0.6.0.** One entry per person or thing, its machines in the entry's options (no subentries); trigger and condition rules, holds, flip limit, loop warning; a `calendar_event` condition; README recipes; copy machine, `explain`, optional state binary sensors; condition-rule waits, the reason in the activity log, broken-rule repairs, optional time-in-state sensors. No transition events (for now). Next: maybe a card that draws the machine. See [`.agents/plan.md`](.agents/plan.md).
 
 ## Commands
 
@@ -32,6 +32,9 @@ custom_components/abstract_state_machine/
   data.py          # Thing, AsmConfigEntry, unique_id()
   select.py        # the state (RestoreEntity, full status incl. holds as extra data); device_entry; service handlers
   binary_sensor.py # optional: one per state (machine setting state_sensors), follows the runtime
+  sensor.py        # optional: hours in each state today (machine setting time_sensors), from runtime.time
+  timeinstate.py   # TimeInState: today's time per state, midnight roll, restart (pure)
+  logbook.py       # describes EVENT_RULE_APPLIED: "Day type moved to holiday (PTO today)"
   config_flow.py   # config flow: placement + first machine; options flow (Configure): machines, rules, states, settings, name/device
   services.py      # set_state (reason, hold), clear_override, explain (response only; platform entity services)
   condition.py     # condition platform: abstract_state_machine.calendar_event (+ conditions.yaml for the picker)
@@ -44,7 +47,7 @@ dev/               # docker compose preview HA + fake inputs
 
 - **Entry = a person or thing; its machines live in `entry.options`.** `options` = `placement` (virtual / existing / none), `device_id` (existing), `machines` (each with its own `id`); `entry.data` is empty. No subentries: HA 2026.10+ gives a device one config entry and at most one subentry, so machines as subentries left the shared device under "Devices that don't belong to a sub-entry" (0.2.0), and people/things as subentries of one entry added a level (briefly, in 0.3.0 development). Machines are added and edited through the options flow (Configure), which saves rule edits mid-flow with `async_update_entry` and finishes with `async_create_entry(data=options)`.
 - **Devices go on entities through `device_entry`.** The virtual device is created in `async_setup_entry` with identifier `(DOMAIN, entry_id)`; an existing device belongs to another integration's entry and is only linked.
-- **A machine's unique id is `f"{machine_id}_state"`; a state sensor's `f"{machine_id}_is_{state}"`.** Renaming a state moves its sensor's unique id (entity id and history kept). Setup removes registry entries no longer wanted (`data.wanted_unique_ids`: removed machines, removed states, sensors turned off), and the virtual device once the entry moved off it (after the platforms set up, so the entities have moved first).
+- **A machine's unique id is `f"{machine_id}_state"`; a state sensor's `f"{machine_id}_is_{state}"`; a time sensor's `f"{machine_id}_time_{state}"`.** Renaming a state moves its sensors' unique ids (entity id and history kept). Setup removes registry entries no longer wanted (`data.wanted_unique_ids`: removed machines, removed states, sensors turned off), and the virtual device once the entry moved off it (after the platforms set up, so the entities have moved first).
 - **Any entry change reloads it** (update listener): machines added, edited or removed, placement, title. HA doesn't abort an open options flow on reload, so the rule editor can save and stay.
 - **Schemas use `probatio`** (HA 2026.10+), imported as `vol`.
 - **States are user-defined; rules belong to the state they lead to.** Condition rules: first state top to bottom with a match wins, else the fallback state. A manual change or a trigger rule's change holds against them until their answer changes (or `hold` runs out, or `clear_override`).
@@ -58,6 +61,10 @@ dev/               # docker compose preview HA + fake inputs
 - **Our own conditions go through HA's condition platform** (`condition.py` → `async_get_conditions`, `conditions.yaml`, `conditions` in strings). They show in the automation editor's picker, so in rule forms too, but only once the integration is loaded (an entry exists). `calendar_event` caches today's and tomorrow's events (refresh every 15 min and at midnight), checks synchronously, `needs_polling` is True, and calls tracked actions when a refresh changes the events. Checkers hold timers: whoever builds one must `async_unload()` it (the runtime does).
 - **Options-flow menu titles can't use placeholders** (the frontend shows "Translation … MISSING_VALUE"); form titles and menu descriptions can. Menu steps get a fixed title and put names in the description.
 - **Brand icon ships in `brand/`** (`icon.png`, `icon@2x.png`); HA 2026.x serves custom integrations' own brand images.
+- **Condition-rule waits (`for`) live in the runtime**, not the engine: `_compute` keeps when each waiting rule became true, counts it once the wait is up, and sets a timer for the next deadline. `_seed_waits` treats a rule that already holds the machine as waited after a restart.
+- **The activity log reason uses the automation pattern:** rule changes (and `set_state` with a reason) fire `EVENT_RULE_APPLIED` in a new context and write the state in that context; `logbook.py` describes it, linked to the select's entity id.
+- **Broken-rule repairs** (`broken_rules_{machine_id}`): invalid rules and referenced entities that are in neither the state machine nor the entity registry. Re-checked on every entity registry update. `__init__` removes repair issues of machines that no longer exist.
+- **Time in state is kept in the select's extra restore data** (`StoredStatus.time`) and restored into `runtime.time`; downtime isn't counted.
 - **Device triggers come from HA's select integration** (`current_option_changed` with from/to) for machines on a device; we don't add our own.
 - **No presets.** Day type, house mode, etc. are recipes the user builds.
 

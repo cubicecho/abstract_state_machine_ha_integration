@@ -27,6 +27,7 @@ from .const import (
 )
 from .data import AsmConfigEntry, machine_label, unique_id
 from .runtime import MachineRuntime
+from .timeinstate import TimeInState
 
 
 async def async_setup_entry(
@@ -38,9 +39,10 @@ async def async_setup_entry(
 
 @dataclass
 class StoredStatus(ExtraStoredData):
-    """The full status, holds included, kept across restarts."""
+    """The full status, holds included, and today's time in each state, kept across restarts."""
 
     status: engine.Status
+    time: TimeInState | None = None
 
     def as_dict(self) -> dict[str, Any]:
         s = self.status
@@ -53,6 +55,7 @@ class StoredStatus(ExtraStoredData):
             "held": s.held,
             "held_against": s.held_against,
             "hold_until": s.hold_until.isoformat() if s.hold_until else None,
+            "time": self.time.as_dict() if self.time else None,
         }
 
     @classmethod
@@ -71,7 +74,7 @@ class StoredStatus(ExtraStoredData):
                 held=bool(data.get("held")),
                 held_against=data.get("held_against"),
                 hold_until=hold_until,
-            ))
+            ), TimeInState.from_dict(data.get("time")) if data.get("time") else None)
         except (KeyError, TypeError, ValueError):
             return None
 
@@ -133,12 +136,13 @@ class MachineSelect(SelectEntity, RestoreEntity):
     @property
     def extra_restore_state_data(self) -> StoredStatus | None:
         status = self.runtime.status
-        return StoredStatus(status) if status else None
+        return StoredStatus(status, self.runtime.time) if status else None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+        self.runtime.entity_id = self.entity_id
         self.async_on_remove(self.runtime.async_add_listener(self._changed))
-        self.runtime.async_restore(await self._async_restored())
+        self.runtime.async_restore(*await self._async_restored())
 
         async def start(_hass: HomeAssistant) -> None:
             await self.runtime.async_start()
@@ -146,11 +150,11 @@ class MachineSelect(SelectEntity, RestoreEntity):
         self.async_on_remove(async_at_started(self.hass, start))
         self.async_on_remove(self.runtime.async_stop)
 
-    async def _async_restored(self) -> engine.Status | None:
+    async def _async_restored(self) -> tuple[engine.Status | None, TimeInState | None]:
         extra = await self.async_get_last_extra_data()
         if extra is not None and (stored := StoredStatus.from_dict(extra.as_dict())) is not None:
-            return stored.status
-        return _from_state(await self.async_get_last_state())
+            return stored.status, stored.time
+        return _from_state(await self.async_get_last_state()), None
 
     @callback
     def _changed(self, context: Context | None) -> None:

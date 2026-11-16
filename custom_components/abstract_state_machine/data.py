@@ -27,6 +27,11 @@ def state_sensor_unique_id(machine_id: str, state: str) -> str:
     return f"{machine_id}_is_{state}"
 
 
+def time_sensor_unique_id(machine_id: str, state: str) -> str:
+    """The unique id of a machine's "time in this state today" sensor."""
+    return f"{machine_id}_time_{state}"
+
+
 def wanted_unique_ids(thing: Thing) -> set[str]:
     """Every entity this entry should have."""
     wanted: set[str] = set()
@@ -34,6 +39,8 @@ def wanted_unique_ids(thing: Thing) -> set[str]:
         wanted.add(unique_id(runtime.machine_id))
         if runtime.machine.state_sensors:
             wanted.update(state_sensor_unique_id(runtime.machine_id, name) for name in runtime.machine.names)
+        if runtime.machine.time_sensors:
+            wanted.update(time_sensor_unique_id(runtime.machine_id, name) for name in runtime.machine.names)
     return wanted
 
 

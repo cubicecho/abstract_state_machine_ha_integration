@@ -120,7 +120,7 @@
           "rules": "Rules: what moves the machine into each state",
           "edit_states": "Add, remove or reorder states",
           "rename_state": "Rename a state",
-          "settings": "Name, fallback, person, flip limit, state sensors",
+          "settings": "Name, fallback, person, flip limit, extra sensors",
           "icons": "State icons"
         },
         "description": "**{machine}**: what do you want to change?"
@@ -147,11 +147,13 @@
           "fallback": "Fallback state",
           "person": "Person (optional)",
           "max_flips": "Flip limit (rule changes per minute)",
-          "state_sensors": "A binary sensor per state"
+          "state_sensors": "A binary sensor per state",
+          "time_sensors": "Time in each state today"
         },
         "data_description": {
           "max_flips": "After this many rule-driven changes within a minute, the machine ignores its rules until the minute is up. Stops machines that read each other from flipping forever.",
-          "state_sensors": "Adds one on/off entity per state, e.g. \"Hour type sleeping\", for dashboards, HomeKit or anything that wants a simple on/off."
+          "state_sensors": "Adds one on/off entity per state, e.g. \"Hour type sleeping\", for dashboards, HomeKit or anything that wants a simple on/off.",
+          "time_sensors": "Adds one sensor per state with the hours spent in it since midnight, e.g. \"Hour type working today\"."
         }
       },
       "icons": {
@@ -190,10 +192,12 @@
         "description": "While all of these conditions are true, the machine is in {state}, unless a state above it also has a matching rule.",
         "data": {
           "name": "Name",
-          "conditions": "Conditions"
+          "conditions": "Conditions",
+          "for": "Only once true for (optional)"
         },
         "data_description": {
-          "name": "Shown as the machine's reason while this rule holds it."
+          "name": "Shown as the machine's reason while this rule holds it.",
+          "for": "Wait this long before the rule counts, e.g. 10 minutes of \"nobody home\" before away, so a phone dropping off Wi-Fi doesn't flip the house. Leaving is still immediate."
         }
       },
       "loop_warning": {
@@ -313,6 +317,10 @@
     "flip_limit": {
       "title": "{machine} is changing state too often",
       "description": "{machine} changed state {max_flips} times within a minute because of its rules, so it ignores them until the minute is up. Its rules may form a loop with another machine's. Check its rules, or raise its flip limit (the entry's Configure → Edit a state machine → Name, fallback, person and more). This goes away after a restart or when the machine is edited."
+    },
+    "broken_rules": {
+      "title": "Some rules of {machine} don't work",
+      "description": "These rules are skipped, or read entities that don't exist (deleted, or renamed: rules don't follow renames):\n\n{problems}\n\nEdit them under the entry's Configure → Edit a state machine → Rules. This goes away once they're fixed."
     }
   }
 }
