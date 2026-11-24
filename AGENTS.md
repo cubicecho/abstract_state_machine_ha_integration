@@ -18,8 +18,6 @@ TMPDIR=$PWD/.uvtmp uv pip install -p .venv/bin/python pytest pytest-asyncio pyte
 .venv/bin/ruff check custom_components/ tests/
 ```
 
-Preview the UI in a throwaway HA (Docker, local daemon): `cd dev && docker --context default compose up -d` → http://localhost:8123. After a Python change, `docker --context default compose restart`. See [`dev/README.md`](dev/README.md).
-
 ## Layout
 
 ```
@@ -40,7 +38,6 @@ custom_components/abstract_state_machine/
   condition.py     # condition platform: abstract_state_machine.calendar_event (+ conditions.yaml for the picker)
 tests/
   common.py        # machine(), add_thing(), machine_data(): entries with machines, no flows
-dev/               # docker compose preview HA + fake inputs
 ```
 
 ## Key Conventions

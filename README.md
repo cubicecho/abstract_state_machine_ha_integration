@@ -174,4 +174,4 @@ target:
 
 ## Development
 
-See [`AGENTS.md`](AGENTS.md). To click through the UI in a throwaway Home Assistant: `cd dev && docker --context default compose up -d` ([`dev/README.md`](dev/README.md)).
+See [`AGENTS.md`](AGENTS.md).

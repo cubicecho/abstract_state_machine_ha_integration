@@ -161,10 +161,6 @@ Planned files under `custom_components/abstract_state_machine/`:
 
 **Unavailable inputs**: a condition on an unavailable entity is false (HA's behaviour), so the rule just doesn't match. Optionally, keep the current state while a referenced entity is unavailable (**open**).
 
-## Previewing the UI locally
-
-`dev/` runs a throwaway Home Assistant in Docker with this repo's `custom_components/` mounted, plus fake inputs (power slider, door toggle, people, schedules) to poke at. See `dev/README.md`. It's for clicking through the flows and watching entities change, not for tests: tests use `pytest-homeassistant-custom-component` like the other integrations.
-
 ## Phases
 
 0. **Scaffold** ✅ (2026-11-15) — these docs, `dev/` preview instance, git repo.

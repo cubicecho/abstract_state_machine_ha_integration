@@ -15,7 +15,4 @@ htmlcov/
 .mypy_cache/
 .claude/worktrees/
 
-# Local preview Home Assistant: keep only the hand-written config
-dev/config/*
-!dev/config/configuration.yaml
 .uvtmp/
